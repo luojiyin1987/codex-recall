@@ -86,6 +86,29 @@ cxq open --home /path/to/.codex 019fe0cb
 
 `--home` controls where `cxq` looks up the session. For the VS Code target, it does not change the Codex home used by the running extension.
 
+## Recommended: ripgrep
+
+`cxq search` uses [`ripgrep`](https://github.com/BurntSushi/ripgrep) (`rg`) as a fast candidate filter when it is available. `rg` is optional: if it is not installed, `cxq` falls back to its built-in scanner, but searches over a large Codex history can be noticeably slower.
+
+Install `ripgrep` with your platform package manager:
+
+```bash
+# Debian / Ubuntu / WSL
+sudo apt-get install ripgrep
+
+# macOS (Homebrew)
+brew install ripgrep
+
+# Windows (winget)
+winget install BurntSushi.ripgrep.MSVC
+```
+
+Verify the installation:
+
+```bash
+rg --version
+```
+
 ## Build
 
 ```bash
