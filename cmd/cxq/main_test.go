@@ -307,9 +307,7 @@ func TestWSLTermProgramProbeShimChangesOnlyProbeDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(string(output)); got != realDir {
-		t.Fatalf("probe cwd = %q, want %q", got, realDir)
-	}
+	requireSameDirectory(t, strings.TrimSpace(string(output)), realDir, "probe")
 
 	other := exec.Command(shimPath, "/c", "echo ok")
 	other.Dir = sessionDir
@@ -318,9 +316,7 @@ func TestWSLTermProgramProbeShimChangesOnlyProbeDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(string(output)); got != sessionDir {
-		t.Fatalf("other command cwd = %q, want %q", got, sessionDir)
-	}
+	requireSameDirectory(t, strings.TrimSpace(string(output)), sessionDir, "other command")
 
 	cleanup()
 	if _, err := os.Stat(shimDir); !os.IsNotExist(err) {
@@ -344,6 +340,21 @@ func TestWSLTermProgramProbeShimSkipsNonWSL(t *testing.T) {
 	}
 	if strings.Join(got, "\x00") != strings.Join(wanted, "\x00") {
 		t.Fatalf("environment changed: got %q, want %q", got, wanted)
+	}
+}
+
+func requireSameDirectory(t *testing.T, got, want, label string) {
+	t.Helper()
+	gotInfo, err := os.Stat(got)
+	if err != nil {
+		t.Fatalf("stat %s cwd %q: %v", label, got, err)
+	}
+	wantInfo, err := os.Stat(want)
+	if err != nil {
+		t.Fatalf("stat expected %s cwd %q: %v", label, want, err)
+	}
+	if !os.SameFile(gotInfo, wantInfo) {
+		t.Fatalf("%s cwd = %q, want same directory as %q", label, got, want)
 	}
 }
 
