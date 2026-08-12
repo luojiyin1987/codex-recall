@@ -27,8 +27,54 @@ Search is a case-insensitive literal match over user and assistant conversation 
 `--project` and `--source` are optional case-insensitive exact-match filters over the displayed `PROJECT` and `SOURCE` values. When both are supplied, both conditions must match.
 
 ```text
-DATE              PROJECT  SOURCE  ROLE  SESSION   MATCH
-2026-08-09 10:01  lint-md  vscode  user  019abc... ... why does Promise need a controlled pause? ...
+DATE              PROJECT       SOURCE  ROLE  SESSION                               MATCH
+2026-08-08 17:54  cve-lite-cli  vscode  user  019fe0cb-9760-78b1-b545-b5e90d1dd0d7  ... annotated tag ...
+```
+
+### Use a search result
+
+The `SESSION` column is the Codex conversation ID. Copy the full ID, or just a unique prefix, and pass it to another `cxq` command.
+
+For example, the result above can be referenced as either:
+
+```text
+019fe0cb-9760-78b1-b545-b5e90d1dd0d7
+```
+
+or, when that prefix is unique:
+
+```text
+019fe0cb
+```
+
+The most common next step is `open`, which uses the `SOURCE` value to choose the right client:
+
+```bash
+cxq open 019fe0cb
+```
+
+For a `vscode` session, `open` opens the conversation in the Codex VS Code extension. For a `cli` session, it resumes the conversation with the Codex CLI. Other sources require `--target vscode` or `--target cli`.
+
+You can also inspect the conversation without opening Codex:
+
+```bash
+cxq show 019fe0cb
+```
+
+Or explicitly resume it with the Codex CLI:
+
+```bash
+cxq resume 019fe0cb
+```
+
+In short:
+
+```text
+cxq search "query"
+        |
+        +--> cxq open SESSION    # open in the source client
+        +--> cxq show SESSION    # inspect in the terminal
+        +--> cxq resume SESSION  # force Codex CLI resume
 ```
 
 Show a conversation by full session ID or a unique prefix:
