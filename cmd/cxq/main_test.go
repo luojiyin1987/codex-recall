@@ -95,6 +95,60 @@ func TestNewOpenCommandWSL(t *testing.T) {
 	}
 }
 
+func TestNewOpenCommandVSCodeWSL(t *testing.T) {
+	codePath := "/home/user/.vscode-server/bin/commit/bin/remote-cli/code"
+	got, err := newOpenCommand(
+		"vscode://openai.chatgpt/local/019fe0cb",
+		"linux",
+		[]string{"WSL_DISTRO_NAME=Ubuntu", "VSCODE_IPC_HOOK_CLI=/run/user/1000/vscode-ipc.sock"},
+		func(name string) (string, error) {
+			if name != "code" {
+				t.Fatalf("lookPath() name = %q, want code", name)
+			}
+			return codePath, nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != codePath {
+		t.Fatalf("command name = %q, want %q", got.Name, codePath)
+	}
+	wantArgs := []string{"--openExternal", "vscode://openai.chatgpt/local/019fe0cb"}
+	if strings.Join(got.Args, "\x00") != strings.Join(wantArgs, "\x00") {
+		t.Fatalf("command args = %q, want %q", got.Args, wantArgs)
+	}
+	if got.Dir != "" {
+		t.Fatalf("command directory = %q, want empty", got.Dir)
+	}
+}
+
+func TestNewOpenCommandVSCodeWSLFallsBackToWindows(t *testing.T) {
+	cmdPath := "/mnt/c/Windows/System32/cmd.exe"
+	var names []string
+	got, err := newOpenCommand(
+		"vscode://openai.chatgpt/local/019fe0cb",
+		"linux",
+		[]string{"WSL_DISTRO_NAME=Ubuntu", "VSCODE_IPC_HOOK_CLI=/run/user/1000/vscode-ipc.sock"},
+		func(name string) (string, error) {
+			names = append(names, name)
+			if name == "code" {
+				return "", errors.New("missing")
+			}
+			return cmdPath, nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(names, "\x00") != "code\x00cmd.exe" {
+		t.Fatalf("lookPath() names = %q, want code then cmd.exe", names)
+	}
+	if got.Name != cmdPath {
+		t.Fatalf("command name = %q, want %q", got.Name, cmdPath)
+	}
+}
+
 func TestNewOpenCommandNativePlatforms(t *testing.T) {
 	conversationURL := "vscode://openai.chatgpt/local/019fe0cb"
 	tests := []struct {

@@ -348,6 +348,15 @@ func openConversationURL(conversationURL string) error {
 
 func newOpenCommand(conversationURL, goos string, env []string, lookPath lookPathFunc) (openCommand, error) {
 	if goos == "linux" && (hasEnvValue(env, "WSL_DISTRO_NAME") || hasEnvValue(env, "WSL_INTEROP")) {
+		if hasEnvValue(env, "VSCODE_IPC_HOOK_CLI") {
+			if name, err := lookPath("code"); err == nil {
+				return openCommand{
+					Name: name,
+					Args: []string{"--openExternal", conversationURL},
+				}, nil
+			}
+		}
+
 		name, err := lookPath("cmd.exe")
 		if err != nil {
 			return openCommand{}, fmt.Errorf("find cmd.exe: %w", err)

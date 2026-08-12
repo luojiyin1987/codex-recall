@@ -65,6 +65,8 @@ cxq open --vscode-scheme vscode-insiders 019fe0cb
 
 The VS Code route depends on the current Codex extension URI handler. A future extension release can change this route.
 
+In a VS Code WSL terminal, `open` sends the route through the current VS Code IPC channel. This keeps the active WSL window. Other WSL terminals use the Windows URI handler.
+
 The CLI discovers JSONL rollout files below `$CODEX_HOME/sessions` and `$CODEX_HOME/archived_sessions`, or the corresponding directories under `~/.codex`.
 
 An alternate Codex home can be supplied explicitly:
