@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -29,6 +30,10 @@ func run(args []string) error {
 		return runList(args[1:])
 	case "search":
 		return runSearch(args[1:])
+	case "show":
+		return runShow(args[1:])
+	case "resume":
+		return runResume(args[1:])
 	case "help", "-h", "--help":
 		printUsage()
 		return nil
@@ -151,6 +156,86 @@ func runSearch(args []string) error {
 	return nil
 }
 
+func runShow(args []string) error {
+	flags := flag.NewFlagSet("show", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 || strings.TrimSpace(flags.Arg(0)) == "" {
+		return fmt.Errorf("usage: cxq show [--home PATH] SESSION")
+	}
+
+	home, err := resolveHome(*homeFlag)
+	if err != nil {
+		return err
+	}
+	session, err := codex.ResolveSession(home, flags.Arg(0))
+	if err != nil {
+		return err
+	}
+	messages, err := codex.ReadConversation(session.Path)
+	if err != nil {
+		return fmt.Errorf("read conversation: %w", err)
+	}
+
+	writer := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintf(writer, "SESSION\t%s\n", session.ID)
+	fmt.Fprintf(writer, "DATE\t%s\n", formatDate(session))
+	fmt.Fprintf(writer, "PROJECT\t%s\n", session.Project())
+	fmt.Fprintf(writer, "SOURCE\t%s\n", session.Source)
+	fmt.Fprintf(writer, "CWD\t%s\n", emptyDash(session.CWD))
+	fmt.Fprintf(writer, "PATH\t%s\n", session.Path)
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+
+	if len(messages) == 0 {
+		fmt.Fprintln(os.Stdout, "\n(no user/assistant messages)")
+		return nil
+	}
+	for _, message := range messages {
+		label := message.Role
+		if !message.Timestamp.IsZero() {
+			label += " " + message.Timestamp.Local().Format("2006-01-02 15:04:05")
+		}
+		fmt.Fprintf(os.Stdout, "\n[%s]\n%s\n", label, message.Text)
+	}
+	return nil
+}
+
+func runResume(args []string) error {
+	flags := flag.NewFlagSet("resume", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 || strings.TrimSpace(flags.Arg(0)) == "" {
+		return fmt.Errorf("usage: cxq resume [--home PATH] SESSION")
+	}
+
+	home, err := resolveHome(*homeFlag)
+	if err != nil {
+		return err
+	}
+	session, err := codex.ResolveSession(home, flags.Arg(0))
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command("codex", "resume", session.ID)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = withCodexHome(os.Environ(), home)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("codex resume %s: %w", session.ID, err)
+	}
+	return nil
+}
+
 func resolveHome(homeFlag string) (string, error) {
 	if homeFlag != "" {
 		return homeFlag, nil
@@ -162,11 +247,38 @@ func resolveHome(homeFlag string) (string, error) {
 	return home, nil
 }
 
+func withCodexHome(env []string, home string) []string {
+	const prefix = "CODEX_HOME="
+	result := make([]string, 0, len(env)+1)
+	replaced := false
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			if !replaced {
+				result = append(result, prefix+home)
+				replaced = true
+			}
+			continue
+		}
+		result = append(result, entry)
+	}
+	if !replaced {
+		result = append(result, prefix+home)
+	}
+	return result
+}
+
 func formatDate(session codex.Session) string {
 	if session.Timestamp.IsZero() {
 		return "-"
 	}
 	return session.Timestamp.Local().Format("2006-01-02 15:04")
+}
+
+func emptyDash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
 }
 
 func printUsage() {
@@ -175,9 +287,13 @@ func printUsage() {
 Usage:
   cxq list [--home PATH]
   cxq search [--home PATH] [--limit N] QUERY
+  cxq show [--home PATH] SESSION
+  cxq resume [--home PATH] SESSION
 
 Commands:
   list    Discover and list local Codex sessions
   search  Search user and assistant conversation text
+  show    Show user and assistant messages from a session
+  resume  Resume a session with the official Codex CLI
   help    Show this help`)
 }

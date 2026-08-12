@@ -26,6 +26,22 @@ DATE              PROJECT  ROLE  SESSION   MATCH
 2026-08-09 10:01  lint-md  user  019abc... ... why does Promise need a controlled pause? ...
 ```
 
+Show a conversation by full session ID or a unique prefix:
+
+```bash
+cxq show 019fe0cb
+```
+
+`show` prints session metadata followed by user and assistant messages. Tool output, reasoning, and metadata records are omitted.
+
+Resume the same session with the official Codex CLI:
+
+```bash
+cxq resume 019fe0cb
+```
+
+`resume` resolves the prefix to the full local session ID and then runs `codex resume <session-id>` with the terminal attached. The `codex` executable must be available on `PATH`.
+
 The CLI discovers JSONL rollout files below `$CODEX_HOME/sessions` and `$CODEX_HOME/archived_sessions`, or the corresponding directories under `~/.codex`.
 
 An alternate Codex home can be supplied explicitly:
@@ -33,6 +49,8 @@ An alternate Codex home can be supplied explicitly:
 ```bash
 cxq list --home /path/to/.codex
 cxq search --home /path/to/.codex "Promise"
+cxq show --home /path/to/.codex 019fe0cb
+cxq resume --home /path/to/.codex 019fe0cb
 ```
 
 ## Build
@@ -51,6 +69,7 @@ go run ./cmd/cxq search "Promise"
 
 - Treat Codex session files as read-only input.
 - Tolerate unknown JSONL event types.
-- Search conversation text, not tool noise or reasoning data.
+- Search and show conversation text, not tool noise or reasoning data.
+- Delegate session resumption to the official Codex CLI.
 - Keep discovery, parsing, and search independent from future indexing layers.
 - Prefer a small, cross-platform CLI with minimal dependencies.
