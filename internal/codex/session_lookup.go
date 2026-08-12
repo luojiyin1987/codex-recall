@@ -7,7 +7,9 @@ import (
 )
 
 // ResolveSession resolves a full session ID or a unique ID prefix to a local
-// Codex session. Duplicate copies of the same session ID are treated as one
+// Codex session. Standard rollout filenames are used to avoid parsing unrelated
+// session files. Non-standard JSONL filenames remain parse candidates for
+// compatibility. Duplicate copies of the same session ID are treated as one
 // logical session, preferring the newest metadata record.
 func ResolveSession(home, selector string) (Session, error) {
 	selector = strings.TrimSpace(selector)
@@ -15,7 +17,7 @@ func ResolveSession(home, selector string) (Session, error) {
 		return Session{}, fmt.Errorf("session selector must not be empty")
 	}
 
-	files, err := DiscoverFiles(home)
+	files, err := sessionCandidateFiles(home, selector)
 	if err != nil {
 		return Session{}, err
 	}
@@ -50,4 +52,26 @@ func ResolveSession(home, selector string) (Session, error) {
 		return Session{}, fmt.Errorf("session prefix %q is ambiguous (%d matches); provide more characters", selector, len(matches))
 	}
 	return matches[0], nil
+}
+
+func sessionCandidateFiles(home, selector string) ([]string, error) {
+	files, err := DiscoverFiles(home)
+	if err != nil {
+		return nil, err
+	}
+
+	candidates := make([]string, 0)
+	for _, path := range files {
+		id, _, err := parseRolloutFilename(path)
+		if err != nil {
+			// Preserve support for fixtures, imported histories, or future file
+			// shapes that do not follow the standard rollout filename format.
+			candidates = append(candidates, path)
+			continue
+		}
+		if strings.HasPrefix(id, selector) {
+			candidates = append(candidates, path)
+		}
+	}
+	return candidates, nil
 }
