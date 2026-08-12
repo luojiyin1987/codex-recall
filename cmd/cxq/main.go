@@ -104,11 +104,13 @@ func runSearch(args []string) error {
 	flags.SetOutput(os.Stderr)
 	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
 	limitFlag := flags.Int("limit", 20, "maximum number of matching sessions to display")
+	projectFlag := flags.String("project", "", "only sessions whose project exactly matches this value")
+	sourceFlag := flags.String("source", "", "only sessions whose source exactly matches this value")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 1 || strings.TrimSpace(flags.Arg(0)) == "" {
-		return fmt.Errorf("usage: cxq search [--home PATH] [--limit N] QUERY")
+		return fmt.Errorf("usage: cxq search [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY")
 	}
 	if *limitFlag <= 0 {
 		return fmt.Errorf("limit must be greater than zero")
@@ -133,7 +135,7 @@ func runSearch(args []string) error {
 			fmt.Fprintf(os.Stderr, "cxq: warning: %v\n", err)
 			continue
 		}
-		if ok {
+		if ok && matchesSearchFilters(match.Session, *projectFlag, *sourceFlag) {
 			matches = append(matches, match)
 		}
 	}
@@ -269,7 +271,6 @@ func runOpen(args []string) error {
 }
 
 func resumeSession(home string, session codex.Session) error {
-
 	cmd := exec.Command("codex", "resume", session.ID)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -533,6 +534,18 @@ func withCodexHome(env []string, home string) []string {
 	return result
 }
 
+func matchesSearchFilters(session codex.Session, project, source string) bool {
+	project = strings.TrimSpace(project)
+	source = strings.TrimSpace(source)
+	if project != "" && !strings.EqualFold(session.Project(), project) {
+		return false
+	}
+	if source != "" && !strings.EqualFold(session.Source, source) {
+		return false
+	}
+	return true
+}
+
 func formatDate(session codex.Session) string {
 	if session.Timestamp.IsZero() {
 		return "-"
@@ -552,7 +565,7 @@ func printUsage() {
 
 Usage:
   cxq list [--home PATH]
-  cxq search [--home PATH] [--limit N] QUERY
+  cxq search [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
   cxq show [--home PATH] SESSION
   cxq resume [--home PATH] SESSION
   cxq open [--home PATH] [--target TARGET] [--vscode-scheme SCHEME] SESSION

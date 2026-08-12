@@ -17,9 +17,14 @@ Search conversation text:
 ```bash
 cxq search "Promise"
 cxq search --limit 5 "annotated tag"
+cxq search --project lint-md "Promise"
+cxq search --source vscode "annotated tag"
+cxq search --project cve-lite-cli --source vscode "tag"
 ```
 
 Search is a case-insensitive literal match over user and assistant conversation text. Tool output, reasoning records, and session metadata are excluded. The first matching message from each session is shown with a compact snippet.
+
+`--project` and `--source` are optional case-insensitive exact-match filters over the displayed `PROJECT` and `SOURCE` values. When both are supplied, both conditions must match.
 
 ```text
 DATE              PROJECT  SOURCE  ROLE  SESSION   MATCH
