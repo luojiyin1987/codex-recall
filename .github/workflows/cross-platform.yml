@@ -1,0 +1,15 @@
+name: Cross-platform CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: luojiyin1987/cross-platform-ci/.github/workflows/build.yml@main
+    with:
+      package: ./cmd/cxq
+      binary-name: cxq
