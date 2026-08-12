@@ -323,14 +323,36 @@ func vscodeConversationURL(scheme, sessionID string) (string, error) {
 	if scheme != "vscode" && scheme != "vscode-insiders" {
 		return "", fmt.Errorf("invalid VS Code URI scheme %q; use vscode or vscode-insiders", scheme)
 	}
-	if strings.TrimSpace(sessionID) == "" {
-		return "", fmt.Errorf("session ID is empty")
+	if !validCodexSessionID(sessionID) {
+		return "", fmt.Errorf("invalid Codex session ID %q; expected a UUID", sessionID)
 	}
 	return (&url.URL{
 		Scheme: scheme,
 		Host:   "openai.chatgpt",
 		Path:   "/local/" + sessionID,
 	}).String(), nil
+}
+
+func validCodexSessionID(id string) bool {
+	if len(id) != 36 {
+		return false
+	}
+	for index := range id {
+		switch index {
+		case 8, 13, 18, 23:
+			if id[index] != '-' {
+				return false
+			}
+		default:
+			character := id[index]
+			if !((character >= '0' && character <= '9') ||
+				(character >= 'a' && character <= 'f') ||
+				(character >= 'A' && character <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func openConversationURL(conversationURL string) error {

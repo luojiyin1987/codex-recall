@@ -39,31 +39,63 @@ func TestResolveOpenTarget(t *testing.T) {
 }
 
 func TestVSCodeConversationURL(t *testing.T) {
-	got, err := vscodeConversationURL("vscode", "019fe0cb-1234")
+	const sessionID = "019fe0cb-1234-7abc-8def-0123456789ab"
+	got, err := vscodeConversationURL("vscode", sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "vscode://openai.chatgpt/local/019fe0cb-1234"
+	want := "vscode://openai.chatgpt/local/" + sessionID
 	if got != want {
 		t.Fatalf("vscodeConversationURL() = %q, want %q", got, want)
 	}
 
-	got, err = vscodeConversationURL("vscode-insiders", "019fe0cb-1234")
+	got, err = vscodeConversationURL("vscode-insiders", sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want = "vscode-insiders://openai.chatgpt/local/019fe0cb-1234"
+	want = "vscode-insiders://openai.chatgpt/local/" + sessionID
 	if got != want {
 		t.Fatalf("vscodeConversationURL() = %q, want %q", got, want)
 	}
 }
 
 func TestVSCodeConversationURLRejectsInvalidValues(t *testing.T) {
-	if _, err := vscodeConversationURL("http", "019fe0cb"); err == nil {
+	const sessionID = "019fe0cb-1234-7abc-8def-0123456789ab"
+	if _, err := vscodeConversationURL("http", sessionID); err == nil {
 		t.Fatal("vscodeConversationURL() accepted an invalid scheme")
 	}
-	if _, err := vscodeConversationURL("vscode", ""); err == nil {
-		t.Fatal("vscodeConversationURL() accepted an empty session ID")
+	for _, id := range []string{
+		"",
+		"019fe0cb",
+		"019fe0cb-1234-7abc-8def-0123456789ab&calc.exe",
+		"019fe0cb-1234-7abc-8def-0123456789a&",
+		"019fe0cb-1234-7abc-8def-0123456789a|",
+		"019fe0cb-1234-7abc-8def-0123456789a<",
+		"019fe0cb-1234-7abc-8def-0123456789a>",
+		"019fe0cb-1234-7abc-8def-0123456789a^",
+	} {
+		if _, err := vscodeConversationURL("vscode", id); err == nil {
+			t.Fatalf("vscodeConversationURL() accepted invalid session ID %q", id)
+		}
+	}
+}
+
+func TestValidCodexSessionID(t *testing.T) {
+	tests := []struct {
+		id   string
+		want bool
+	}{
+		{id: "019fe0cb-1234-7abc-8def-0123456789ab", want: true},
+		{id: "019FE0CB-1234-7ABC-8DEF-0123456789AB", want: true},
+		{id: "019fe0cb12347abc8def0123456789ab", want: false},
+		{id: "019fe0cb-1234-7abc-8def-0123456789ag", want: false},
+		{id: "019fe0cb-1234-7abc-8def-0123456789a&", want: false},
+		{id: " 19fe0cb-1234-7abc-8def-0123456789ab", want: false},
+	}
+	for _, test := range tests {
+		if got := validCodexSessionID(test.id); got != test.want {
+			t.Errorf("validCodexSessionID(%q) = %v, want %v", test.id, got, test.want)
+		}
 	}
 }
 

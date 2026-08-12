@@ -79,6 +79,8 @@ cxq resume --home /path/to/.codex 019fe0cb
 cxq open --home /path/to/.codex 019fe0cb
 ```
 
+`--home` controls where `cxq` looks up the session. For the VS Code target, it does not change the Codex home used by the running extension.
+
 ## Build
 
 ```bash
