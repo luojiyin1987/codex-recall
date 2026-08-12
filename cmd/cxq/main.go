@@ -3,9 +3,11 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -35,6 +37,8 @@ func run(args []string) error {
 		return runShow(args[1:])
 	case "resume":
 		return runResume(args[1:])
+	case "open":
+		return runOpen(args[1:])
 	case "help", "-h", "--help":
 		printUsage()
 		return nil
@@ -142,10 +146,10 @@ func runSearch(args []string) error {
 	}
 
 	writer := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(writer, "DATE\tPROJECT\tROLE\tSESSION\tMATCH")
+	fmt.Fprintln(writer, "DATE\tPROJECT\tSOURCE\tROLE\tSESSION\tMATCH")
 	for _, match := range matches {
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n",
-			formatDate(match.Session), match.Session.Project(), match.Role, match.Session.ID, match.Snippet)
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			formatDate(match.Session), match.Session.Project(), match.Session.Source, match.Role, match.Session.ID, match.Snippet)
 	}
 	if err := writer.Flush(); err != nil {
 		return err
@@ -225,6 +229,46 @@ func runResume(args []string) error {
 	if err != nil {
 		return err
 	}
+	return resumeSession(home, session)
+}
+
+func runOpen(args []string) error {
+	flags := flag.NewFlagSet("open", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
+	targetFlag := flags.String("target", "auto", "open target: auto, vscode, or cli")
+	schemeFlag := flags.String("vscode-scheme", "vscode", "VS Code URI scheme: vscode or vscode-insiders")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 || strings.TrimSpace(flags.Arg(0)) == "" {
+		return fmt.Errorf("usage: cxq open [--home PATH] [--target TARGET] [--vscode-scheme SCHEME] SESSION")
+	}
+
+	home, err := resolveHome(*homeFlag)
+	if err != nil {
+		return err
+	}
+	session, err := codex.ResolveSession(home, flags.Arg(0))
+	if err != nil {
+		return err
+	}
+	target, err := resolveOpenTarget(*targetFlag, session.Source)
+	if err != nil {
+		return err
+	}
+	if target == "cli" {
+		return resumeSession(home, session)
+	}
+
+	conversationURL, err := vscodeConversationURL(*schemeFlag, session.ID)
+	if err != nil {
+		return err
+	}
+	return openConversationURL(conversationURL)
+}
+
+func resumeSession(home string, session codex.Session) error {
 
 	cmd := exec.Command("codex", "resume", session.ID)
 	cmd.Stdin = os.Stdin
@@ -250,6 +294,124 @@ func runResume(args []string) error {
 }
 
 type lookPathFunc func(string) (string, error)
+
+type openCommand struct {
+	Name string
+	Args []string
+	Dir  string
+}
+
+func resolveOpenTarget(requested, source string) (string, error) {
+	switch requested {
+	case "vscode", "cli":
+		return requested, nil
+	case "auto":
+		switch strings.ToLower(source) {
+		case "vscode":
+			return "vscode", nil
+		case "cli":
+			return "cli", nil
+		default:
+			return "", fmt.Errorf("session source %q has no automatic open target; use --target vscode or --target cli", emptyDash(source))
+		}
+	default:
+		return "", fmt.Errorf("invalid open target %q; use auto, vscode, or cli", requested)
+	}
+}
+
+func vscodeConversationURL(scheme, sessionID string) (string, error) {
+	if scheme != "vscode" && scheme != "vscode-insiders" {
+		return "", fmt.Errorf("invalid VS Code URI scheme %q; use vscode or vscode-insiders", scheme)
+	}
+	if !validCodexSessionID(sessionID) {
+		return "", fmt.Errorf("invalid Codex session ID %q; expected a UUID", sessionID)
+	}
+	return (&url.URL{
+		Scheme: scheme,
+		Host:   "openai.chatgpt",
+		Path:   "/local/" + sessionID,
+	}).String(), nil
+}
+
+func validCodexSessionID(id string) bool {
+	if len(id) != 36 {
+		return false
+	}
+	for index := range id {
+		switch index {
+		case 8, 13, 18, 23:
+			if id[index] != '-' {
+				return false
+			}
+		default:
+			character := id[index]
+			if !((character >= '0' && character <= '9') ||
+				(character >= 'a' && character <= 'f') ||
+				(character >= 'A' && character <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func openConversationURL(conversationURL string) error {
+	spec, err := newOpenCommand(conversationURL, runtime.GOOS, os.Environ(), exec.LookPath)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(spec.Name, spec.Args...)
+	cmd.Dir = spec.Dir
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("open VS Code conversation: %w", err)
+	}
+	return nil
+}
+
+func newOpenCommand(conversationURL, goos string, env []string, lookPath lookPathFunc) (openCommand, error) {
+	if goos == "linux" && (hasEnvValue(env, "WSL_DISTRO_NAME") || hasEnvValue(env, "WSL_INTEROP")) {
+		if hasEnvValue(env, "VSCODE_IPC_HOOK_CLI") {
+			if name, err := lookPath("code"); err == nil {
+				return openCommand{
+					Name: name,
+					Args: []string{"--openExternal", conversationURL},
+				}, nil
+			}
+		}
+
+		name, err := lookPath("cmd.exe")
+		if err != nil {
+			return openCommand{}, fmt.Errorf("find cmd.exe: %w", err)
+		}
+		return openCommand{
+			Name: name,
+			Args: []string{"/d", "/s", "/c", "start", "", conversationURL},
+			Dir:  filepath.Dir(name),
+		}, nil
+	}
+
+	var opener string
+	var args []string
+	switch goos {
+	case "windows":
+		opener = "cmd.exe"
+		args = []string{"/d", "/s", "/c", "start", "", conversationURL}
+	case "darwin":
+		opener = "open"
+		args = []string{conversationURL}
+	case "linux":
+		opener = "xdg-open"
+		args = []string{conversationURL}
+	default:
+		return openCommand{}, fmt.Errorf("cannot open VS Code on %s", goos)
+	}
+
+	name, err := lookPath(opener)
+	if err != nil {
+		return openCommand{}, fmt.Errorf("find %s: %w", opener, err)
+	}
+	return openCommand{Name: name, Args: args}, nil
+}
 
 func withWSLTermProgramProbeShim(env []string, lookPath lookPathFunc) ([]string, func(), error) {
 	cleanup := func() {}
@@ -393,11 +555,13 @@ Usage:
   cxq search [--home PATH] [--limit N] QUERY
   cxq show [--home PATH] SESSION
   cxq resume [--home PATH] SESSION
+  cxq open [--home PATH] [--target TARGET] [--vscode-scheme SCHEME] SESSION
 
 Commands:
   list    Discover and list local Codex sessions
   search  Search user and assistant conversation text
   show    Show user and assistant messages from a session
   resume  Resume a session with the official Codex CLI
+  open    Open a session in its source client
   help    Show this help`)
 }
