@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -229,7 +230,14 @@ func runResume(args []string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = withCodexHome(os.Environ(), home)
+	cmdEnv := withCodexHome(os.Environ(), home)
+	cmdEnv, cleanup, shimErr := withWSLTermProgramProbeShim(cmdEnv, exec.LookPath)
+	if shimErr != nil {
+		fmt.Fprintf(os.Stderr, "cxq: warning: prepare WSL terminal probe: %v\n", shimErr)
+	} else {
+		defer cleanup()
+	}
+	cmd.Env = cmdEnv
 	if dir, dirErr := resolveResumeDir(session.CWD); dirErr != nil {
 		fmt.Fprintf(os.Stderr, "cxq: warning: session cwd %q is unavailable (%v); resuming from current directory\n", session.CWD, dirErr)
 	} else if dir != "" {
@@ -239,6 +247,83 @@ func runResume(args []string) error {
 		return fmt.Errorf("codex resume %s: %w", session.ID, err)
 	}
 	return nil
+}
+
+type lookPathFunc func(string) (string, error)
+
+func withWSLTermProgramProbeShim(env []string, lookPath lookPathFunc) ([]string, func(), error) {
+	cleanup := func() {}
+	if !hasEnvValue(env, "WSL_DISTRO_NAME") && !hasEnvValue(env, "WSL_INTEROP") {
+		return env, cleanup, nil
+	}
+
+	realCmd, err := lookPath("cmd.exe")
+	if err != nil {
+		return env, cleanup, nil
+	}
+	shimDir, err := os.MkdirTemp("", "cxq-wsl-cmd-")
+	if err != nil {
+		return env, cleanup, err
+	}
+	cleanup = func() { _ = os.RemoveAll(shimDir) }
+
+	// Codex probes Windows TERM_PROGRAM during WSL startup.
+	// cmd.exe can block when its current directory is a WSL UNC path.
+	const shim = `#!/bin/sh
+if [ "$#" -eq 4 ] && [ "$1" = "/d" ] && [ "$2" = "/s" ] && [ "$3" = "/c" ] && [ "$4" = "set TERM_PROGRAM" ]; then
+    cd "$_CXQ_REAL_CMD_DIR" || exit 1
+fi
+exec "$_CXQ_REAL_CMD_EXE" "$@"
+`
+	if err := os.WriteFile(filepath.Join(shimDir, "cmd.exe"), []byte(shim), 0o700); err != nil {
+		cleanup()
+		return env, func() {}, err
+	}
+
+	env = withEnvValue(env, "_CXQ_REAL_CMD_EXE", realCmd)
+	env = withEnvValue(env, "_CXQ_REAL_CMD_DIR", filepath.Dir(realCmd))
+	path := envValue(env, "PATH")
+	if path == "" {
+		path = shimDir
+	} else {
+		path = shimDir + string(os.PathListSeparator) + path
+	}
+	env = withEnvValue(env, "PATH", path)
+	return env, cleanup, nil
+}
+
+func hasEnvValue(env []string, key string) bool {
+	return envValue(env, key) != ""
+}
+
+func envValue(env []string, key string) string {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return ""
+}
+
+func withEnvValue(env []string, key, value string) []string {
+	prefix := key + "="
+	result := make([]string, 0, len(env)+1)
+	replaced := false
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			if !replaced {
+				result = append(result, prefix+value)
+				replaced = true
+			}
+			continue
+		}
+		result = append(result, entry)
+	}
+	if !replaced {
+		result = append(result, prefix+value)
+	}
+	return result
 }
 
 func resolveResumeDir(cwd string) (string, error) {
