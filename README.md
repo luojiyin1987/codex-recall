@@ -40,7 +40,7 @@ Resume the same session with the official Codex CLI:
 cxq resume 019fe0cb
 ```
 
-`resume` resolves the prefix to the full local session ID and then runs `codex resume <session-id>` with the terminal attached. The `codex` executable must be available on `PATH`.
+`resume` resolves the prefix to the full local session ID and then runs `codex resume <session-id>` with the terminal attached. When the session's original working directory still exists, Codex is started from that directory; otherwise `cxq` warns and falls back to the current directory. The `codex` executable must be available on `PATH`.
 
 The CLI discovers JSONL rollout files below `$CODEX_HOME/sessions` and `$CODEX_HOME/archived_sessions`, or the corresponding directories under `~/.codex`.
 
