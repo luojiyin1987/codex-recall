@@ -1,6 +1,6 @@
 # codex-recall
 
-Search, find, and resume your local Codex conversations.
+Search, find, and open your local Codex conversations.
 
 `codex-recall` is intentionally read-only: it discovers local Codex rollout files and extracts the session and conversation data needed for browsing and search. It does not modify Codex's own session data.
 
@@ -22,8 +22,8 @@ cxq search --limit 5 "annotated tag"
 Search is a case-insensitive literal match over user and assistant conversation text. Tool output, reasoning records, and session metadata are excluded. The first matching message from each session is shown with a compact snippet.
 
 ```text
-DATE              PROJECT  ROLE  SESSION   MATCH
-2026-08-09 10:01  lint-md  user  019abc... ... why does Promise need a controlled pause? ...
+DATE              PROJECT  SOURCE  ROLE  SESSION   MATCH
+2026-08-09 10:01  lint-md  vscode  user  019abc... ... why does Promise need a controlled pause? ...
 ```
 
 Show a conversation by full session ID or a unique prefix:
@@ -42,6 +42,29 @@ cxq resume 019fe0cb
 
 `resume` resolves the prefix to the full local session ID and then runs `codex resume <session-id>` with the terminal attached. When the session's original working directory still exists, Codex is started from that directory; otherwise `cxq` warns and falls back to the current directory. The `codex` executable must be available on `PATH`.
 
+Open a session in its source client:
+
+```bash
+cxq open 019fe0cb
+```
+
+`open` uses the stored session source. It opens `vscode` sessions in the Codex extension. It resumes `cli` sessions with the Codex CLI.
+
+Use an explicit target when the stored source is not `vscode` or `cli`:
+
+```bash
+cxq open --target vscode 019fe0cb
+cxq open --target cli 019fe0cb
+```
+
+VS Code Insiders uses a different URI scheme:
+
+```bash
+cxq open --vscode-scheme vscode-insiders 019fe0cb
+```
+
+The VS Code route depends on the current Codex extension URI handler. A future extension release can change this route.
+
 The CLI discovers JSONL rollout files below `$CODEX_HOME/sessions` and `$CODEX_HOME/archived_sessions`, or the corresponding directories under `~/.codex`.
 
 An alternate Codex home can be supplied explicitly:
@@ -51,6 +74,7 @@ cxq list --home /path/to/.codex
 cxq search --home /path/to/.codex "Promise"
 cxq show --home /path/to/.codex 019fe0cb
 cxq resume --home /path/to/.codex 019fe0cb
+cxq open --home /path/to/.codex 019fe0cb
 ```
 
 ## Build
@@ -70,6 +94,7 @@ go run ./cmd/cxq search "Promise"
 - Treat Codex session files as read-only input.
 - Tolerate unknown JSONL event types.
 - Search and show conversation text, not tool noise or reasoning data.
-- Delegate session resumption to the official Codex CLI.
+- Delegate CLI session resumption to the official Codex CLI.
+- Delegate VS Code session display to the Codex extension.
 - Keep discovery, parsing, and search independent from future indexing layers.
 - Prefer a small, cross-platform CLI with minimal dependencies.
