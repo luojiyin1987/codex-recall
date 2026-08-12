@@ -38,6 +38,7 @@ jobs:
             os="${target%-*}"
             arch="${target#*-}"
             archive="cxq_${version}_${os}_${arch}.tar.gz"
+            chmod 0755 "artifacts/${target}/cxq"
             tar -C "artifacts/${target}" -czf "dist/${archive}" cxq
           done
 
