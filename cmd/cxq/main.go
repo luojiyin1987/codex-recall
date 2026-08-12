@@ -109,9 +109,9 @@ func runSearch(args []string) error {
 	if err != nil {
 		return err
 	}
-	files, err := codex.DiscoverFiles(home)
+	files, err := codex.SearchCandidateFiles(home, query)
 	if err != nil {
-		return fmt.Errorf("discover sessions: %w", err)
+		return fmt.Errorf("discover search candidates: %w", err)
 	}
 
 	matches := make([]codex.SearchMatch, 0)
