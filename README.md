@@ -4,6 +4,40 @@ Search, find, and open your local Codex conversations.
 
 `codex-recall` is intentionally read-only: it discovers local Codex rollout files and extracts the session and conversation data needed for browsing and search. It does not modify Codex's own session data.
 
+## Installation
+
+### Prebuilt binaries
+
+Tagged releases publish native `cxq` binaries for Linux, Windows, and macOS on both x64 and ARM64. Download the archive for your platform from [GitHub Releases](https://github.com/luojiyin1987/codex-recall/releases).
+
+Linux and macOS archives contain a single `cxq` binary. For example:
+
+```bash
+tar -xzf cxq_0.1.0_linux_x64.tar.gz
+mkdir -p ~/.local/bin
+install -m 0755 cxq ~/.local/bin/cxq
+```
+
+Make sure `~/.local/bin` is on `PATH`.
+
+On Windows, extract `cxq.exe` from the matching `.zip` archive and place it in a directory on `PATH`.
+
+Each release also includes `SHA256SUMS` for verifying downloaded archives.
+
+### Go install
+
+If Go is already installed:
+
+```bash
+go install github.com/luojiyin1987/codex-recall/cmd/cxq@latest
+```
+
+Make sure the Go binary directory (usually `$GOPATH/bin` or `~/go/bin`) is on `PATH`, then verify:
+
+```bash
+cxq help
+```
+
 ## Commands
 
 List local sessions:

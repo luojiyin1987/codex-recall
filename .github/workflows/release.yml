@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    permissions:
+      contents: read
+    uses: luojiyin1987/cross-platform-ci/.github/workflows/build.yml@d5adc3c2fa0e50a00a0c7a50ce70c1e2cd2731a4
+    with:
+      package: ./cmd/cxq
+      binary-name: cxq
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download native binaries
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: Package release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+
+          for target in linux-x64 linux-arm64 macos-x64 macos-arm64; do
+            os="${target%-*}"
+            arch="${target#*-}"
+            archive="cxq_${version}_${os}_${arch}.tar.gz"
+            chmod 0755 "artifacts/${target}/cxq"
+            tar -C "artifacts/${target}" -czf "dist/${archive}" cxq
+          done
+
+          for target in windows-x64 windows-arm64; do
+            os="${target%-*}"
+            arch="${target#*-}"
+            archive="cxq_${version}_${os}_${arch}.zip"
+            (cd "artifacts/${target}" && zip -q "../../dist/${archive}" cxq.exe)
+          done
+
+          (cd dist && sha256sum cxq_* > SHA256SUMS)
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --verify-tag \
+            --generate-notes \
+            --title "cxq ${GITHUB_REF_NAME}"
