@@ -230,10 +230,29 @@ func runResume(args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = withCodexHome(os.Environ(), home)
+	if dir, dirErr := resolveResumeDir(session.CWD); dirErr != nil {
+		fmt.Fprintf(os.Stderr, "cxq: warning: session cwd %q is unavailable (%v); resuming from current directory\n", session.CWD, dirErr)
+	} else if dir != "" {
+		cmd.Dir = dir
+	}
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("codex resume %s: %w", session.ID, err)
 	}
 	return nil
+}
+
+func resolveResumeDir(cwd string) (string, error) {
+	if cwd == "" {
+		return "", nil
+	}
+	info, err := os.Stat(cwd)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("not a directory")
+	}
+	return cwd, nil
 }
 
 func resolveHome(homeFlag string) (string, error) {
