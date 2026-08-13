@@ -127,7 +127,7 @@ func TestSearchFilesStopsAtLimit(t *testing.T) {
 		}
 	}
 
-	matches, errs := SearchFiles(searchCandidates(first, second, missing), "needle", 2)
+	matches, errs := searchFiles(searchCandidates(first, second, missing), "needle", 2)
 	if len(errs) != 0 {
 		t.Fatalf("SearchFiles() errors = %v", errs)
 	}
@@ -146,7 +146,7 @@ func TestSearchFilesBoundsCapacityByCandidateCount(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matches, errs := SearchFiles(searchCandidates(path), "needle", 1024)
+	matches, errs := searchFiles(searchCandidates(path), "needle", 1024)
 	if len(errs) != 0 {
 		t.Fatalf("SearchFiles() errors = %v", errs)
 	}
@@ -163,7 +163,7 @@ func TestSearchFilesReusesCandidateMetadata(t *testing.T) {
 	}
 	session := Session{ID: "cached", Path: path}
 
-	matches, errs := SearchFiles([]SearchCandidate{{Path: path, session: session, hasSession: true}}, "needle", 1)
+	matches, errs := searchFiles([]SearchCandidate{{Path: path, session: session, hasSession: true}}, "needle", 1)
 	if len(errs) != 0 {
 		t.Fatalf("SearchFiles() errors = %v", errs)
 	}
@@ -191,4 +191,28 @@ func searchCandidates(paths ...string) []SearchCandidate {
 		candidates = append(candidates, SearchCandidate{Path: path})
 	}
 	return candidates
+}
+
+func TestMatchesSessionFilters(t *testing.T) {
+	session := Session{CWD: "/tmp/Lint-MD", Source: "VSCode"}
+	tests := []struct {
+		name    string
+		project string
+		source  string
+		want    bool
+	}{
+		{name: "no filters", want: true},
+		{name: "project", project: "lint-md", want: true},
+		{name: "project mismatch", project: "other", want: false},
+		{name: "source", source: "vscode", want: true},
+		{name: "source mismatch", source: "cli", want: false},
+		{name: "both", project: " LINT-MD ", source: " VSCODE ", want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := matchesSessionFilters(session, test.project, test.source); got != test.want {
+				t.Fatalf("matchesSessionFilters() = %v, want %v", got, test.want)
+			}
+		})
+	}
 }

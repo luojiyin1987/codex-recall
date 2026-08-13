@@ -121,30 +121,22 @@ func runSearch(args []string) error {
 	if err != nil {
 		return err
 	}
-	files, err := codex.SearchCandidateFiles(home, query)
+	result, err := codex.Search(home, codex.SearchOptions{
+		Query:   query,
+		Limit:   *limitFlag,
+		Project: *projectFlag,
+		Source:  *sourceFlag,
+	})
 	if err != nil {
-		return fmt.Errorf("discover search candidates: %w", err)
+		return err
 	}
-	var includeSession func(codex.Session) bool
-	if strings.TrimSpace(*projectFlag) != "" || strings.TrimSpace(*sourceFlag) != "" {
-		includeSession = func(session codex.Session) bool {
-			return matchesSearchFilters(session, *projectFlag, *sourceFlag)
-		}
-	}
-	candidates := codex.RankCandidateFiles(files, includeSession)
-
-	matches, searchErrors := codex.SearchFiles(candidates, query, *limitFlag)
-	for _, searchErr := range searchErrors {
+	for _, searchErr := range result.Warnings {
 		fmt.Fprintf(os.Stderr, "cxq: warning: %v\n", searchErr)
 	}
 
-	sort.Slice(matches, func(i, j int) bool {
-		return matches[i].Session.Timestamp.After(matches[j].Session.Timestamp)
-	})
-
 	writer := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(writer, "DATE\tPROJECT\tSOURCE\tROLE\tSESSION\tMATCH")
-	for _, match := range matches {
+	for _, match := range result.Matches {
 		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			formatDate(match.Session), match.Session.Project(), match.Session.Source, match.Role, match.Session.ID, match.Snippet)
 	}
@@ -152,8 +144,8 @@ func runSearch(args []string) error {
 		return err
 	}
 
-	if len(searchErrors) > 0 {
-		fmt.Fprintf(os.Stderr, "cxq: skipped %d unreadable session file(s)\n", len(searchErrors))
+	if len(result.Warnings) > 0 {
+		fmt.Fprintf(os.Stderr, "cxq: skipped %d unreadable session file(s)\n", len(result.Warnings))
 	}
 	return nil
 }
@@ -527,18 +519,6 @@ func withCodexHome(env []string, home string) []string {
 		result = append(result, prefix+home)
 	}
 	return result
-}
-
-func matchesSearchFilters(session codex.Session, project, source string) bool {
-	project = strings.TrimSpace(project)
-	source = strings.TrimSpace(source)
-	if project != "" && !strings.EqualFold(session.Project(), project) {
-		return false
-	}
-	if source != "" && !strings.EqualFold(session.Source, source) {
-		return false
-	}
-	return true
 }
 
 func formatDate(session codex.Session) string {

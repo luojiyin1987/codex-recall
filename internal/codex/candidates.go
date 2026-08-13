@@ -22,16 +22,9 @@ type SearchCandidate struct {
 	hasSession bool
 }
 
-// SearchCandidateFiles returns rollout files that may contain query. When
-// ripgrep is available it is used as a fast prefilter; otherwise the complete
-// discovered file set is returned so SearchFile preserves the same semantics.
-func SearchCandidateFiles(home, query string) ([]string, error) {
-	return searchCandidateFiles(home, query, exec.LookPath, runCommand)
-}
-
-// RankCandidateFiles filters candidates and puts newer sessions first.
+// rankCandidateFiles filters candidates and puts newer sessions first.
 // Files with unreadable metadata remain last and can be skipped by the limit.
-func RankCandidateFiles(paths []string, include func(Session) bool) []SearchCandidate {
+func rankCandidateFiles(paths []string, include func(Session) bool) []SearchCandidate {
 	ranked := make([]SearchCandidate, 0, len(paths))
 	unreadable := make([]SearchCandidate, 0)
 	for _, path := range paths {
