@@ -20,6 +20,37 @@ func SearchCandidateFiles(home, query string) ([]string, error) {
 	return searchCandidateFiles(home, query, exec.LookPath, runCommand)
 }
 
+// RankCandidateFiles filters candidates and puts newer sessions first.
+// Files with unreadable metadata remain last and can be skipped by the limit.
+func RankCandidateFiles(paths []string, include func(Session) bool) []string {
+	type rankedCandidate struct {
+		path    string
+		session Session
+	}
+
+	ranked := make([]rankedCandidate, 0, len(paths))
+	unreadable := make([]string, 0)
+	for _, path := range paths {
+		session, err := ParseFile(path)
+		if err != nil {
+			unreadable = append(unreadable, path)
+			continue
+		}
+		if include == nil || include(session) {
+			ranked = append(ranked, rankedCandidate{path: path, session: session})
+		}
+	}
+
+	sort.SliceStable(ranked, func(i, j int) bool {
+		return ranked[i].session.Timestamp.After(ranked[j].session.Timestamp)
+	})
+	result := make([]string, 0, len(ranked)+len(unreadable))
+	for _, candidate := range ranked {
+		result = append(result, candidate.path)
+	}
+	return append(result, unreadable...)
+}
+
 func searchCandidateFiles(home, query string, lookPath lookPathFunc, run commandFunc) ([]string, error) {
 	allFiles, err := DiscoverFiles(home)
 	if err != nil {

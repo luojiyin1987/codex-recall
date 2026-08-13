@@ -58,6 +58,19 @@ cxq search --project cve-lite-cli --source vscode "tag"
 
 Search is a case-insensitive literal match over user and assistant conversation text. Tool output, reasoning records, and session metadata are excluded. The first matching message from each session is shown with a compact snippet.
 
+Search returns at most 20 sessions by default. This command is equivalent to `cxq search --limit 20 "Promise"`.
+
+Candidates are scanned from newest to oldest. The search stops when it reaches the limit. Older matching sessions are not scanned or displayed.
+
+Set a larger limit when you need more results:
+
+```bash
+cxq search --limit 100 "Promise"
+cxq search --limit 10000 "Promise"
+```
+
+The limit is a maximum result count. A large limit scans all candidates when fewer matching sessions exist.
+
 `--project` and `--source` are optional case-insensitive exact-match filters over the displayed `PROJECT` and `SOURCE` values. When both are supplied, both conditions must match.
 
 ```text

@@ -38,6 +38,32 @@ type eventMessage struct {
 	Message string `json:"message"`
 }
 
+// SearchFiles scans ordered candidates until it reaches limit.
+func SearchFiles(paths []string, query string, limit int) ([]SearchMatch, []error) {
+	if limit <= 0 {
+		return nil, []error{errors.New("search limit must be greater than zero")}
+	}
+
+	capacity := min(limit, len(paths))
+	matches := make([]SearchMatch, 0, capacity)
+	var searchErrors []error
+	for _, path := range paths {
+		match, ok, err := SearchFile(path, query)
+		if err != nil {
+			searchErrors = append(searchErrors, err)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		matches = append(matches, match)
+		if len(matches) == limit {
+			break
+		}
+	}
+	return matches, searchErrors
+}
+
 // SearchFile returns the first user/assistant conversation match in a rollout.
 // Tool output, reasoning, and metadata are intentionally excluded.
 func SearchFile(path, query string) (SearchMatch, bool, error) {
