@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -24,6 +25,18 @@ type SearchMatch struct {
 	Snippet string
 }
 
+type SearchOptions struct {
+	Query   string
+	Limit   int
+	Project string
+	Source  string
+}
+
+type SearchResult struct {
+	Matches  []SearchMatch
+	Warnings []error
+}
+
 type responseMessage struct {
 	Type    string `json:"type"`
 	Role    string `json:"role"`
@@ -38,8 +51,44 @@ type eventMessage struct {
 	Message string `json:"message"`
 }
 
-// SearchFiles scans ordered candidates until it reaches limit.
-func SearchFiles(candidates []SearchCandidate, query string, limit int) ([]SearchMatch, []error) {
+// Search finds the newest conversation matches that satisfy the options.
+func Search(home string, options SearchOptions) (SearchResult, error) {
+	if options.Limit <= 0 {
+		return SearchResult{}, errors.New("search limit must be greater than zero")
+	}
+	if strings.TrimSpace(options.Query) == "" {
+		return SearchResult{}, errors.New("search query must not be empty")
+	}
+
+	paths, err := searchCandidateFiles(home, options.Query, exec.LookPath, runCommand)
+	if err != nil {
+		return SearchResult{}, fmt.Errorf("discover search candidates: %w", err)
+	}
+	var include func(Session) bool
+	if strings.TrimSpace(options.Project) != "" || strings.TrimSpace(options.Source) != "" {
+		include = func(session Session) bool {
+			return matchesSessionFilters(session, options.Project, options.Source)
+		}
+	}
+	candidates := rankCandidateFiles(paths, include)
+	matches, warnings := searchFiles(candidates, options.Query, options.Limit)
+	return SearchResult{Matches: matches, Warnings: warnings}, nil
+}
+
+func matchesSessionFilters(session Session, project, source string) bool {
+	project = strings.TrimSpace(project)
+	source = strings.TrimSpace(source)
+	if project != "" && !strings.EqualFold(session.Project(), project) {
+		return false
+	}
+	if source != "" && !strings.EqualFold(session.Source, source) {
+		return false
+	}
+	return true
+}
+
+// searchFiles scans ordered candidates until it reaches limit.
+func searchFiles(candidates []SearchCandidate, query string, limit int) ([]SearchMatch, []error) {
 	if limit <= 0 {
 		return nil, []error{errors.New("search limit must be greater than zero")}
 	}

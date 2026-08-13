@@ -146,7 +146,7 @@ func TestSearchCandidateFilesExcludesToolOnlyMatches(t *testing.T) {
 		`{"payload":{"type":"function_call_output","output":"release \"tag\""},"type":"response_item"}`,
 	})
 
-	got, err := SearchCandidateFiles(home, `release "tag"`)
+	got, err := searchCandidateFiles(home, `release "tag"`, exec.LookPath, runCommand)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestRankCandidateFilesUsesMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := RankCandidateFiles([]string{older, other, broken, newer}, func(session Session) bool {
+	got := rankCandidateFiles([]string{older, other, broken, newer}, func(session Session) bool {
 		return session.Project() == "lint-md"
 	})
 	want := []string{newer, older, broken}
@@ -248,16 +248,20 @@ func TestOptimizedSearchMatchesBaseline(t *testing.T) {
 	})
 	baseline = baseline[:2]
 
-	candidates, err := SearchCandidateFiles(home, "tag")
+	result, err := Search(home, SearchOptions{
+		Query:   "tag",
+		Limit:   2,
+		Project: "lint-md",
+		Source:  "vscode",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	optimized, searchErrors := SearchFiles(RankCandidateFiles(candidates, include), "tag", 2)
-	if len(searchErrors) != 0 {
-		t.Fatalf("SearchFiles() errors = %v", searchErrors)
+	if len(result.Warnings) != 0 {
+		t.Fatalf("Search() warnings = %v", result.Warnings)
 	}
-	if !reflect.DeepEqual(optimized, baseline) {
-		t.Fatalf("optimized = %#v, baseline = %#v", optimized, baseline)
+	if !reflect.DeepEqual(result.Matches, baseline) {
+		t.Fatalf("optimized = %#v, baseline = %#v", result.Matches, baseline)
 	}
 }
 
