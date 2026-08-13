@@ -172,6 +172,19 @@ func TestSearchFilesReusesCandidateMetadata(t *testing.T) {
 	}
 }
 
+func TestCompileSearchMatcherUsesLiteralCaseInsensitiveMatching(t *testing.T) {
+	matcher, err := compileSearchMatcher("Tag(v2)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matcher.MatchString("release tag(v2)") {
+		t.Fatal("matcher did not match the literal query")
+	}
+	if matcher.MatchString("release tagv2") {
+		t.Fatal("matcher treated query characters as regular expression syntax")
+	}
+}
+
 func searchCandidates(paths ...string) []SearchCandidate {
 	candidates := make([]SearchCandidate, 0, len(paths))
 	for _, path := range paths {
