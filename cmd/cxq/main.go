@@ -125,27 +125,22 @@ func runSearch(args []string) error {
 	if err != nil {
 		return fmt.Errorf("discover search candidates: %w", err)
 	}
+	var includeSession func(codex.Session) bool
+	if strings.TrimSpace(*projectFlag) != "" || strings.TrimSpace(*sourceFlag) != "" {
+		includeSession = func(session codex.Session) bool {
+			return matchesSearchFilters(session, *projectFlag, *sourceFlag)
+		}
+	}
+	files = codex.RankCandidateFiles(files, includeSession)
 
-	matches := make([]codex.SearchMatch, 0)
-	var skipped int
-	for _, path := range files {
-		match, ok, err := codex.SearchFile(path, query)
-		if err != nil {
-			skipped++
-			fmt.Fprintf(os.Stderr, "cxq: warning: %v\n", err)
-			continue
-		}
-		if ok && matchesSearchFilters(match.Session, *projectFlag, *sourceFlag) {
-			matches = append(matches, match)
-		}
+	matches, searchErrors := codex.SearchFiles(files, query, *limitFlag)
+	for _, searchErr := range searchErrors {
+		fmt.Fprintf(os.Stderr, "cxq: warning: %v\n", searchErr)
 	}
 
 	sort.Slice(matches, func(i, j int) bool {
 		return matches[i].Session.Timestamp.After(matches[j].Session.Timestamp)
 	})
-	if len(matches) > *limitFlag {
-		matches = matches[:*limitFlag]
-	}
 
 	writer := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(writer, "DATE\tPROJECT\tSOURCE\tROLE\tSESSION\tMATCH")
@@ -157,8 +152,8 @@ func runSearch(args []string) error {
 		return err
 	}
 
-	if skipped > 0 {
-		fmt.Fprintf(os.Stderr, "cxq: skipped %d unreadable session file(s)\n", skipped)
+	if len(searchErrors) > 0 {
+		fmt.Fprintf(os.Stderr, "cxq: skipped %d unreadable session file(s)\n", len(searchErrors))
 	}
 	return nil
 }

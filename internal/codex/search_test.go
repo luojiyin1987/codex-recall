@@ -111,3 +111,27 @@ func TestSearchSnippetNormalizesWhitespace(t *testing.T) {
 		t.Fatalf("Snippet not normalized: %q", got.Snippet)
 	}
 }
+
+func TestSearchFilesStopsAtLimit(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.jsonl")
+	second := filepath.Join(dir, "second.jsonl")
+	missing := filepath.Join(dir, "missing.jsonl")
+	for index, path := range []string{first, second} {
+		input := strings.Join([]string{
+			`{"type":"session_meta","payload":{"id":"session-` + string(rune('1'+index)) + `","cwd":"/tmp/project"}}`,
+			`{"type":"event_msg","payload":{"type":"user_message","message":"needle"}}`,
+		}, "\n")
+		if err := os.WriteFile(path, []byte(input), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	matches, errs := SearchFiles([]string{first, second, missing}, "needle", 2)
+	if len(errs) != 0 {
+		t.Fatalf("SearchFiles() errors = %v", errs)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("len(matches) = %d, want 2", len(matches))
+	}
+}
