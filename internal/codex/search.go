@@ -44,7 +44,8 @@ func SearchFiles(paths []string, query string, limit int) ([]SearchMatch, []erro
 		return nil, []error{errors.New("search limit must be greater than zero")}
 	}
 
-	matches := make([]SearchMatch, 0, limit)
+	capacity := min(limit, len(paths))
+	matches := make([]SearchMatch, 0, capacity)
 	var searchErrors []error
 	for _, path := range paths {
 		match, ok, err := SearchFile(path, query)

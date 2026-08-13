@@ -3,9 +3,10 @@ package codex
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
-	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -42,13 +43,10 @@ func TestSearchCandidateFilesUsesRipgrepResults(t *testing.T) {
 		t.Fatalf("candidates = %#v", got)
 	}
 	joined := strings.Join(gotArgs, " ")
-	for _, want := range []string{"-l", "-0", "--ignore-case", "--no-ignore", "*.jsonl", "response_item", "event_msg", "user_message", `annotated \\"tag\\"`, root} {
+	for _, want := range []string{"-l", "-0", "--fixed-strings", "--ignore-case", "--no-ignore", "*.jsonl", `annotated \"tag\"`, root} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("args %q missing %q", joined, want)
 		}
-	}
-	if strings.Contains(joined, "--fixed-strings") {
-		t.Fatalf("args %q use fixed-string mode", joined)
 	}
 }
 
@@ -104,45 +102,6 @@ func TestParseRipgrepPathsSortsNullDelimitedOutput(t *testing.T) {
 	}
 }
 
-func TestConversationSearchPatternMatchesOnlyConversationRecords(t *testing.T) {
-	pattern := regexp.MustCompile("(?i)" + conversationSearchPattern(`annotated "tag"`))
-
-	tests := []struct {
-		name string
-		line string
-		want bool
-	}{
-		{
-			name: "response user message",
-			line: `{"type":"response_item","payload":{"type":"message","id":"message-1","role":"user","content":[{"type":"input_text","text":"Annotated \"tag\" release"}]}}`,
-			want: true,
-		},
-		{
-			name: "legacy assistant message",
-			line: `{"type": "event_msg", "payload": {"type": "agent_message", "client_id": "client-1", "message": "Annotated \"tag\" release"}}`,
-			want: true,
-		},
-		{
-			name: "tool output",
-			line: `{"type":"response_item","payload":{"type":"function_call_output","output":"Annotated \"tag\" release"}}`,
-			want: false,
-		},
-		{
-			name: "different message",
-			line: `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"lightweight release"}]}}`,
-			want: false,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := pattern.MatchString(test.line); got != test.want {
-				t.Fatalf("pattern.MatchString() = %v, want %v", got, test.want)
-			}
-		})
-	}
-}
-
 func TestRankCandidateFilesUsesMetadata(t *testing.T) {
 	home := t.TempDir()
 	root := filepath.Join(home, "sessions")
@@ -167,6 +126,81 @@ func TestRankCandidateFilesUsesMetadata(t *testing.T) {
 	want := []string{newer, older, broken}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("RankCandidateFiles() = %#v, want %#v", got, want)
+	}
+}
+
+func TestOptimizedSearchMatchesBaseline(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg is not installed")
+	}
+
+	home := t.TempDir()
+	root := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSearchFixture(t, root, "reordered.jsonl", []string{
+		`{"type":"session_meta","payload":{"source":"vscode","cwd":"/tmp/lint-md","timestamp":"2026-08-13T03:00:00Z","id":"reordered"}}`,
+		`{"type":"response_item","payload":{"role":"user","content":[{"text":"release tag","type":"input_text"}],"type":"message"}}`,
+	})
+	writeSearchFixture(t, root, "event.jsonl", []string{
+		`{"type":"session_meta","payload":{"id":"event","timestamp":"2026-08-13T02:00:00Z","cwd":"/tmp/lint-md","source":"vscode"}}`,
+		`{"type":"event_msg","payload":{"message":"release tag","type":"agent_message"}}`,
+	})
+	writeSearchFixture(t, root, "older.jsonl", []string{
+		`{"type":"session_meta","payload":{"id":"older","timestamp":"2026-08-13T01:00:00Z","cwd":"/tmp/lint-md","source":"vscode"}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"release tag"}]}}`,
+	})
+	writeSearchFixture(t, root, "other-project.jsonl", []string{
+		`{"type":"session_meta","payload":{"id":"other-project","timestamp":"2026-08-13T04:00:00Z","cwd":"/tmp/other","source":"vscode"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"release tag"}}`,
+	})
+	writeSearchFixture(t, root, "other-source.jsonl", []string{
+		`{"type":"session_meta","payload":{"id":"other-source","timestamp":"2026-08-13T05:00:00Z","cwd":"/tmp/lint-md","source":"cli"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"release tag"}}`,
+	})
+	writeSearchFixture(t, root, "tool.jsonl", []string{
+		`{"type":"session_meta","payload":{"id":"tool","timestamp":"2026-08-13T06:00:00Z","cwd":"/tmp/lint-md","source":"vscode"}}`,
+		`{"type":"response_item","payload":{"type":"function_call_output","output":"release tag"}}`,
+	})
+	writeSearchFixture(t, root, "broken.jsonl", []string{`broken release tag`})
+
+	files, err := DiscoverFiles(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	include := func(session Session) bool {
+		return session.Project() == "lint-md" && session.Source == "vscode"
+	}
+	baseline := make([]SearchMatch, 0)
+	for _, path := range files {
+		match, ok, err := SearchFile(path, "tag")
+		if err == nil && ok && include(match.Session) {
+			baseline = append(baseline, match)
+		}
+	}
+	sort.Slice(baseline, func(i, j int) bool {
+		return baseline[i].Session.Timestamp.After(baseline[j].Session.Timestamp)
+	})
+	baseline = baseline[:2]
+
+	candidates, err := SearchCandidateFiles(home, "tag")
+	if err != nil {
+		t.Fatal(err)
+	}
+	optimized, searchErrors := SearchFiles(RankCandidateFiles(candidates, include), "tag", 2)
+	if len(searchErrors) != 0 {
+		t.Fatalf("SearchFiles() errors = %v", searchErrors)
+	}
+	if !reflect.DeepEqual(optimized, baseline) {
+		t.Fatalf("optimized = %#v, baseline = %#v", optimized, baseline)
+	}
+}
+
+func writeSearchFixture(t *testing.T, root, name string, lines []string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, name), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

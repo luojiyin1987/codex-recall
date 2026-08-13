@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 )
@@ -22,7 +21,7 @@ func SearchCandidateFiles(home, query string) ([]string, error) {
 }
 
 // RankCandidateFiles filters candidates and puts newer sessions first.
-// Files with unreadable metadata remain last to preserve search errors.
+// Files with unreadable metadata remain last and can be skipped by the limit.
 func RankCandidateFiles(paths []string, include func(Session) bool) []string {
 	type rankedCandidate struct {
 		path    string
@@ -103,20 +102,14 @@ func ripgrepArgs(roots []string, query string) []string {
 	args := []string{
 		"-l",
 		"-0",
+		"--fixed-strings",
 		"--ignore-case",
 		"--no-ignore",
 		"--glob", "*.jsonl",
 		"--",
-		conversationSearchPattern(query),
+		jsonEscapedSearchTerm(query),
 	}
 	return append(args, roots...)
-}
-
-func conversationSearchPattern(query string) string {
-	term := regexp.QuoteMeta(jsonEscapedSearchTerm(query))
-	response := `"type"\s*:\s*"response_item"\s*,\s*"payload"\s*:\s*\{\s*"type"\s*:\s*"message".*"role"\s*:\s*"(user|assistant)".*` + term
-	event := `"type"\s*:\s*"event_msg"\s*,\s*"payload"\s*:\s*\{\s*"type"\s*:\s*"(user_message|agent_message)".*"message"\s*:.*` + term
-	return "(" + response + "|" + event + ")"
 }
 
 func jsonEscapedSearchTerm(query string) string {

@@ -135,3 +135,22 @@ func TestSearchFilesStopsAtLimit(t *testing.T) {
 		t.Fatalf("len(matches) = %d, want 2", len(matches))
 	}
 }
+
+func TestSearchFilesBoundsCapacityByCandidateCount(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "match.jsonl")
+	input := strings.Join([]string{
+		`{"type":"session_meta","payload":{"id":"session-1","cwd":"/tmp/project"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"needle"}}`,
+	}, "\n")
+	if err := os.WriteFile(path, []byte(input), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, errs := SearchFiles([]string{path}, "needle", 1024)
+	if len(errs) != 0 {
+		t.Fatalf("SearchFiles() errors = %v", errs)
+	}
+	if cap(matches) > 1 {
+		t.Fatalf("cap(matches) = %d, want at most 1", cap(matches))
+	}
+}
