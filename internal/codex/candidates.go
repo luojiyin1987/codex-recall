@@ -13,6 +13,7 @@ import (
 
 type lookPathFunc func(string) (string, error)
 type commandFunc func(string, ...string) ([]byte, error)
+type discoverFilesFunc func(string) ([]string, error)
 
 // SearchCandidate keeps a path with metadata parsed during candidate ranking.
 type SearchCandidate struct {
@@ -51,34 +52,24 @@ func RankCandidateFiles(paths []string, include func(Session) bool) []SearchCand
 }
 
 func searchCandidateFiles(home, query string, lookPath lookPathFunc, run commandFunc) ([]string, error) {
-	allFiles, err := DiscoverFiles(home)
-	if err != nil {
-		return nil, err
-	}
-	if len(allFiles) == 0 {
-		return allFiles, nil
-	}
+	return searchCandidateFilesWithDiscovery(home, query, lookPath, run, DiscoverFiles)
+}
 
+func searchCandidateFilesWithDiscovery(home, query string, lookPath lookPathFunc, run commandFunc, discover discoverFilesFunc) ([]string, error) {
 	rgPath, err := lookPath("rg")
-	if err != nil {
-		return allFiles, nil
-	}
-
 	roots := existingRolloutRoots(home)
-	if len(roots) == 0 {
-		return allFiles, nil
-	}
-
-	output, err := run(rgPath, ripgrepArgs(roots, query)...)
-	if err != nil {
+	if err == nil && len(roots) > 0 {
+		output, runErr := run(rgPath, ripgrepArgs(roots, query)...)
+		if runErr == nil {
+			return parseRipgrepPaths(output), nil
+		}
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		if errors.As(runErr, &exitErr) && exitErr.ExitCode() == 1 {
 			return []string{}, nil
 		}
-		return allFiles, nil
 	}
 
-	return parseRipgrepPaths(output), nil
+	return discover(home)
 }
 
 func runCommand(name string, args ...string) ([]byte, error) {

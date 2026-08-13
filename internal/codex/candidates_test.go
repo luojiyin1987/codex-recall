@@ -94,6 +94,36 @@ func TestSearchCandidateFilesFallsBackWhenRipgrepFails(t *testing.T) {
 	}
 }
 
+func TestSearchCandidateFilesSkipsDiscoveryWhenRipgrepSucceeds(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	matching := filepath.Join(root, "matching.jsonl")
+	discovered := false
+
+	got, err := searchCandidateFilesWithDiscovery(
+		home,
+		"needle",
+		func(string) (string, error) { return "/fake/rg", nil },
+		func(string, ...string) ([]byte, error) { return []byte(matching + "\x00"), nil },
+		func(string) ([]string, error) {
+			discovered = true
+			return nil, errors.New("discovery should not run")
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if discovered {
+		t.Fatal("SearchCandidateFiles() ran discovery after ripgrep succeeded")
+	}
+	if !reflect.DeepEqual(got, []string{matching}) {
+		t.Fatalf("SearchCandidateFiles() = %#v, want [%s]", got, matching)
+	}
+}
+
 func TestSearchCandidateFilesExcludesToolOnlyMatches(t *testing.T) {
 	if _, err := exec.LookPath("rg"); err != nil {
 		t.Skip("rg is not installed")
