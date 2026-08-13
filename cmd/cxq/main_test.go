@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"os/exec"
@@ -35,6 +36,62 @@ func TestResolveOpenTarget(t *testing.T) {
 				t.Fatalf("resolveOpenTarget() = %q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestCLIRunnerListSearchAndShow(t *testing.T) {
+	home := t.TempDir()
+	sessionID := "019abc11-1234-7abc-8def-0123456789ab"
+	path := filepath.Join(home, "sessions", "2026", "08", "13", "rollout-2026-08-13T01-00-00-"+sessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Join([]string{
+		`{"type":"session_meta","payload":{"id":"` + sessionID + `","timestamp":"2026-08-13T01:00:00Z","cwd":"/tmp/project","source":"vscode"}}`,
+		`{"timestamp":"2026-08-13T01:01:00Z","type":"event_msg","payload":{"type":"user_message","message":"needle message"}}`,
+	}, "\n")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	if err := runner.run([]string{"list", "--home", home}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), sessionID) || stderr.Len() != 0 {
+		t.Fatalf("list stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := runner.run([]string{"search", "--home", home, "needle"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "needle message") || stderr.Len() != 0 {
+		t.Fatalf("search stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := runner.run([]string{"show", "--home", home, "019abc11"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "[user 2026-08-13") || !strings.Contains(stdout.String(), "needle message") {
+		t.Fatalf("show stdout = %q", stdout.String())
+	}
+}
+
+func TestCLIRunnerWritesUsageToInjectedStderr(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	if err := runner.run(nil); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "Usage:") {
+		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
 	}
 }
 
