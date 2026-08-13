@@ -53,6 +53,8 @@ func (c cliRunner) run(args []string) error {
 		return c.runResume(args[1:])
 	case "open":
 		return c.runOpen(args[1:])
+	case "version", "-v", "--version":
+		return c.runVersion(args[1:])
 	case "help", "-h", "--help":
 		c.printUsage()
 		return nil
@@ -545,6 +547,7 @@ Usage:
   cxq show [--home PATH] SESSION
   cxq resume [--home PATH] SESSION
   cxq open [--home PATH] [--target TARGET] [--vscode-scheme SCHEME] SESSION
+  cxq version
 
 Commands:
   list    Discover and list local Codex sessions
@@ -552,5 +555,6 @@ Commands:
   show    Show user and assistant messages from a session
   resume  Resume a session with the official Codex CLI
   open    Open a session in its source client
+  version Show the cxq version
   help    Show this help`)
 }
