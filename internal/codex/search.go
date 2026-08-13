@@ -43,6 +43,10 @@ func SearchFiles(candidates []SearchCandidate, query string, limit int) ([]Searc
 	if limit <= 0 {
 		return nil, []error{errors.New("search limit must be greater than zero")}
 	}
+	matcher, err := compileSearchMatcher(query)
+	if err != nil {
+		return nil, []error{err}
+	}
 
 	capacity := min(limit, len(candidates))
 	matches := make([]SearchMatch, 0, capacity)
@@ -52,7 +56,7 @@ func SearchFiles(candidates []SearchCandidate, query string, limit int) ([]Searc
 		if candidate.hasSession {
 			session = &candidate.session
 		}
-		match, ok, err := searchFile(candidate.Path, query, session)
+		match, ok, err := searchFile(candidate.Path, matcher, session)
 		if err != nil {
 			searchErrors = append(searchErrors, err)
 			continue
@@ -71,18 +75,25 @@ func SearchFiles(candidates []SearchCandidate, query string, limit int) ([]Searc
 // SearchFile returns the first user/assistant conversation match in a rollout.
 // Tool output, reasoning, and metadata are intentionally excluded.
 func SearchFile(path, query string) (SearchMatch, bool, error) {
-	return searchFile(path, query, nil)
+	matcher, err := compileSearchMatcher(query)
+	if err != nil {
+		return SearchMatch{}, false, err
+	}
+	return searchFile(path, matcher, nil)
 }
 
-func searchFile(path, query string, session *Session) (SearchMatch, bool, error) {
+func compileSearchMatcher(query string) (*regexp.Regexp, error) {
 	if strings.TrimSpace(query) == "" {
-		return SearchMatch{}, false, errors.New("search query must not be empty")
+		return nil, errors.New("search query must not be empty")
 	}
-
 	matcher, err := regexp.Compile("(?i)" + regexp.QuoteMeta(query))
 	if err != nil {
-		return SearchMatch{}, false, fmt.Errorf("compile search query: %w", err)
+		return nil, fmt.Errorf("compile search query: %w", err)
 	}
+	return matcher, nil
+}
+
+func searchFile(path string, matcher *regexp.Regexp, session *Session) (SearchMatch, bool, error) {
 
 	file, err := os.Open(path)
 	if err != nil {
