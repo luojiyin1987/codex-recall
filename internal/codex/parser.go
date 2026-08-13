@@ -1,7 +1,6 @@
 package codex
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -59,30 +58,19 @@ func ParseFile(path string) (Session, error) {
 
 // Parse extracts session metadata from a rollout JSONL stream.
 func Parse(r io.Reader) (Session, error) {
-	scanner := newRolloutScanner(r)
-
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
-		}
-
-		var rec record
-		if err := json.Unmarshal(line, &rec); err != nil {
-			// A damaged unrelated line should not hide a later valid
-			// session_meta record.
-			continue
-		}
+	var session Session
+	found := false
+	err := visitRollout(r, func(rec record) (bool, error) {
 		if rec.Type != "session_meta" {
-			continue
+			return false, nil
 		}
 
 		var meta sessionMeta
 		if err := json.Unmarshal(rec.Payload, &meta); err != nil {
-			return Session{}, fmt.Errorf("decode session_meta: %w", err)
+			return false, fmt.Errorf("decode session_meta: %w", err)
 		}
 		if meta.ID == "" {
-			return Session{}, errors.New("session_meta is missing id")
+			return false, errors.New("session_meta is missing id")
 		}
 
 		timestamp := meta.Timestamp
@@ -91,20 +79,25 @@ func Parse(r io.Reader) (Session, error) {
 		}
 		parsedTime, err := parseTimestamp(timestamp)
 		if err != nil {
-			return Session{}, err
+			return false, err
 		}
 
-		return Session{
+		session = Session{
 			ID:        meta.ID,
 			Timestamp: parsedTime,
 			CWD:       meta.CWD,
 			Source:    parseSource(meta.Source),
-		}, nil
-	}
-	if err := scanner.Err(); err != nil {
+		}
+		found = true
+		return true, nil
+	})
+	if err != nil {
 		return Session{}, err
 	}
-	return Session{}, ErrSessionMetaNotFound
+	if !found {
+		return Session{}, ErrSessionMetaNotFound
+	}
+	return session, nil
 }
 
 func parseLegacy(r io.Reader, path string) (Session, error) {
@@ -119,28 +112,22 @@ func parseLegacy(r io.Reader, path string) (Session, error) {
 		Source:    "other",
 	}
 
-	scanner := newRolloutScanner(r)
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
-		}
-
-		var rec record
-		if err := json.Unmarshal(line, &rec); err != nil || rec.Type != "turn_context" {
-			continue
+	err = visitRollout(r, func(rec record) (bool, error) {
+		if rec.Type != "turn_context" {
+			return false, nil
 		}
 
 		var context turnContext
 		if err := json.Unmarshal(rec.Payload, &context); err != nil {
-			continue
+			return false, nil
 		}
 		if context.CWD != "" {
 			session.CWD = context.CWD
-			break
+			return true, nil
 		}
-	}
-	if err := scanner.Err(); err != nil {
+		return false, nil
+	})
+	if err != nil {
 		return Session{}, err
 	}
 	return session, nil
@@ -172,14 +159,6 @@ func parseRolloutFilename(path string) (string, time.Time, error) {
 		return "", time.Time{}, errors.New("legacy rollout filename is missing session id")
 	}
 	return id, timestamp, nil
-}
-
-func newRolloutScanner(r io.Reader) *bufio.Scanner {
-	scanner := bufio.NewScanner(r)
-	// Rollout lines can contain large prompts or tool results. Use a generous
-	// limit so metadata discovery does not become brittle.
-	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
-	return scanner
 }
 
 func parseTimestamp(value string) (time.Time, error) {
