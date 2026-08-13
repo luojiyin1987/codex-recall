@@ -70,7 +70,7 @@ func Search(home string, options SearchOptions) (SearchResult, error) {
 			return matchesSessionFilters(session, options.Project, options.Source)
 		}
 	}
-	candidates := rankCandidateFiles(paths, include)
+	candidates := NewCatalog(home).rankCandidates(paths, include)
 	matches, warnings := searchFiles(candidates, options.Query, options.Limit)
 	return SearchResult{Matches: matches, Warnings: warnings}, nil
 }

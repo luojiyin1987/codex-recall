@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -63,26 +62,13 @@ func runList(args []string) error {
 		return err
 	}
 
-	files, err := codex.DiscoverFiles(home)
+	sessions, warnings, err := codex.NewCatalog(home).Sessions()
 	if err != nil {
 		return fmt.Errorf("discover sessions: %w", err)
 	}
-
-	sessions := make([]codex.Session, 0, len(files))
-	var skipped int
-	for _, path := range files {
-		session, err := codex.ParseFile(path)
-		if err != nil {
-			skipped++
-			fmt.Fprintf(os.Stderr, "cxq: warning: %v\n", err)
-			continue
-		}
-		sessions = append(sessions, session)
+	for _, warning := range warnings {
+		fmt.Fprintf(os.Stderr, "cxq: warning: %v\n", warning)
 	}
-
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].Timestamp.After(sessions[j].Timestamp)
-	})
 
 	writer := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(writer, "DATE\tPROJECT\tSOURCE\tSESSION")
@@ -93,8 +79,8 @@ func runList(args []string) error {
 		return err
 	}
 
-	if skipped > 0 {
-		fmt.Fprintf(os.Stderr, "cxq: skipped %d unreadable session file(s)\n", skipped)
+	if len(warnings) > 0 {
+		fmt.Fprintf(os.Stderr, "cxq: skipped %d unreadable session file(s)\n", len(warnings))
 	}
 	return nil
 }
@@ -165,7 +151,7 @@ func runShow(args []string) error {
 	if err != nil {
 		return err
 	}
-	session, err := codex.ResolveSession(home, flags.Arg(0))
+	session, err := codex.NewCatalog(home).Resolve(flags.Arg(0))
 	if err != nil {
 		return err
 	}
@@ -214,7 +200,7 @@ func runResume(args []string) error {
 	if err != nil {
 		return err
 	}
-	session, err := codex.ResolveSession(home, flags.Arg(0))
+	session, err := codex.NewCatalog(home).Resolve(flags.Arg(0))
 	if err != nil {
 		return err
 	}
@@ -238,7 +224,7 @@ func runOpen(args []string) error {
 	if err != nil {
 		return err
 	}
-	session, err := codex.ResolveSession(home, flags.Arg(0))
+	session, err := codex.NewCatalog(home).Resolve(flags.Arg(0))
 	if err != nil {
 		return err
 	}
