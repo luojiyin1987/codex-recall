@@ -35,7 +35,7 @@ go install github.com/luojiyin1987/codex-recall/cmd/cxq@latest
 Make sure the Go binary directory (usually `$GOPATH/bin` or `~/go/bin`) is on `PATH`, then verify:
 
 ```bash
-cxq help
+cxq --version
 ```
 
 ## Commands
