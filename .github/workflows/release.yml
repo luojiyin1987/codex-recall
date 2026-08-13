@@ -9,10 +9,11 @@ jobs:
   build:
     permissions:
       contents: read
-    uses: luojiyin1987/cross-platform-ci/.github/workflows/build.yml@d5adc3c2fa0e50a00a0c7a50ce70c1e2cd2731a4
+    uses: luojiyin1987/cross-platform-ci/.github/workflows/build.yml@bf2e271adedb396d0fd0790ffe39207740b17e99
     with:
       package: ./cmd/cxq
       binary-name: cxq
+      ldflags: -X main.buildVersion=${{ github.ref_name }}
 
   release:
     needs: build
@@ -25,6 +26,12 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           path: artifacts
+
+      - name: Verify release version
+        shell: bash
+        run: |
+          chmod 0755 artifacts/linux-x64/cxq
+          test "$(artifacts/linux-x64/cxq --version)" = "cxq ${GITHUB_REF_NAME}"
 
       - name: Package release assets
         shell: bash
