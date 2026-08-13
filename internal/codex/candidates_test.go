@@ -94,6 +94,36 @@ func TestSearchCandidateFilesFallsBackWhenRipgrepFails(t *testing.T) {
 	}
 }
 
+func TestSearchCandidateFilesSkipsDiscoveryWhenRipgrepSucceeds(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	matching := filepath.Join(root, "matching.jsonl")
+	discovered := false
+
+	got, err := searchCandidateFilesWithDiscovery(
+		home,
+		"needle",
+		func(string) (string, error) { return "/fake/rg", nil },
+		func(string, ...string) ([]byte, error) { return []byte(matching + "\x00"), nil },
+		func(string) ([]string, error) {
+			discovered = true
+			return nil, errors.New("discovery should not run")
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if discovered {
+		t.Fatal("SearchCandidateFiles() ran discovery after ripgrep succeeded")
+	}
+	if !reflect.DeepEqual(got, []string{matching}) {
+		t.Fatalf("SearchCandidateFiles() = %#v, want [%s]", got, matching)
+	}
+}
+
 func TestSearchCandidateFilesExcludesToolOnlyMatches(t *testing.T) {
 	if _, err := exec.LookPath("rg"); err != nil {
 		t.Skip("rg is not installed")
@@ -116,7 +146,7 @@ func TestSearchCandidateFilesExcludesToolOnlyMatches(t *testing.T) {
 		`{"payload":{"type":"function_call_output","output":"release \"tag\""},"type":"response_item"}`,
 	})
 
-	got, err := SearchCandidateFiles(home, `release "tag"`)
+	got, err := searchCandidateFiles(home, `release "tag"`, exec.LookPath, runCommand)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +181,7 @@ func TestRankCandidateFilesUsesMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := RankCandidateFiles([]string{older, other, broken, newer}, func(session Session) bool {
+	got := NewCatalog(home).rankCandidates([]string{older, other, broken, newer}, func(session Session) bool {
 		return session.Project() == "lint-md"
 	})
 	want := []string{newer, older, broken}
@@ -218,16 +248,20 @@ func TestOptimizedSearchMatchesBaseline(t *testing.T) {
 	})
 	baseline = baseline[:2]
 
-	candidates, err := SearchCandidateFiles(home, "tag")
+	result, err := Search(home, SearchOptions{
+		Query:   "tag",
+		Limit:   2,
+		Project: "lint-md",
+		Source:  "vscode",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	optimized, searchErrors := SearchFiles(RankCandidateFiles(candidates, include), "tag", 2)
-	if len(searchErrors) != 0 {
-		t.Fatalf("SearchFiles() errors = %v", searchErrors)
+	if len(result.Warnings) != 0 {
+		t.Fatalf("Search() warnings = %v", result.Warnings)
 	}
-	if !reflect.DeepEqual(optimized, baseline) {
-		t.Fatalf("optimized = %#v, baseline = %#v", optimized, baseline)
+	if !reflect.DeepEqual(result.Matches, baseline) {
+		t.Fatalf("optimized = %#v, baseline = %#v", result.Matches, baseline)
 	}
 }
 

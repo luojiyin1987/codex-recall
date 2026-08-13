@@ -3,12 +3,12 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -22,34 +22,48 @@ func main() {
 	}
 }
 
+type cliRunner struct {
+	stdin  io.Reader
+	stdout io.Writer
+	stderr io.Writer
+}
+
 func run(args []string) error {
+	return newCLIRunner(os.Stdin, os.Stdout, os.Stderr).run(args)
+}
+
+func newCLIRunner(stdin io.Reader, stdout, stderr io.Writer) cliRunner {
+	return cliRunner{stdin: stdin, stdout: stdout, stderr: stderr}
+}
+
+func (c cliRunner) run(args []string) error {
 	if len(args) == 0 {
-		printUsage()
+		c.printUsage()
 		return nil
 	}
 
 	switch args[0] {
 	case "list":
-		return runList(args[1:])
+		return c.runList(args[1:])
 	case "search":
-		return runSearch(args[1:])
+		return c.runSearch(args[1:])
 	case "show":
-		return runShow(args[1:])
+		return c.runShow(args[1:])
 	case "resume":
-		return runResume(args[1:])
+		return c.runResume(args[1:])
 	case "open":
-		return runOpen(args[1:])
+		return c.runOpen(args[1:])
 	case "help", "-h", "--help":
-		printUsage()
+		c.printUsage()
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
 }
 
-func runList(args []string) error {
+func (c cliRunner) runList(args []string) error {
 	flags := flag.NewFlagSet("list", flag.ContinueOnError)
-	flags.SetOutput(os.Stderr)
+	flags.SetOutput(c.stderr)
 	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -63,28 +77,15 @@ func runList(args []string) error {
 		return err
 	}
 
-	files, err := codex.DiscoverFiles(home)
+	sessions, warnings, err := codex.NewCatalog(home).Sessions()
 	if err != nil {
 		return fmt.Errorf("discover sessions: %w", err)
 	}
-
-	sessions := make([]codex.Session, 0, len(files))
-	var skipped int
-	for _, path := range files {
-		session, err := codex.ParseFile(path)
-		if err != nil {
-			skipped++
-			fmt.Fprintf(os.Stderr, "cxq: warning: %v\n", err)
-			continue
-		}
-		sessions = append(sessions, session)
+	for _, warning := range warnings {
+		fmt.Fprintf(c.stderr, "cxq: warning: %v\n", warning)
 	}
 
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].Timestamp.After(sessions[j].Timestamp)
-	})
-
-	writer := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	writer := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(writer, "DATE\tPROJECT\tSOURCE\tSESSION")
 	for _, session := range sessions {
 		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", formatDate(session), session.Project(), session.Source, session.ID)
@@ -93,15 +94,15 @@ func runList(args []string) error {
 		return err
 	}
 
-	if skipped > 0 {
-		fmt.Fprintf(os.Stderr, "cxq: skipped %d unreadable session file(s)\n", skipped)
+	if len(warnings) > 0 {
+		fmt.Fprintf(c.stderr, "cxq: skipped %d unreadable session file(s)\n", len(warnings))
 	}
 	return nil
 }
 
-func runSearch(args []string) error {
+func (c cliRunner) runSearch(args []string) error {
 	flags := flag.NewFlagSet("search", flag.ContinueOnError)
-	flags.SetOutput(os.Stderr)
+	flags.SetOutput(c.stderr)
 	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
 	limitFlag := flags.Int("limit", 20, "maximum number of matching sessions to display")
 	projectFlag := flags.String("project", "", "only sessions whose project exactly matches this value")
@@ -121,30 +122,22 @@ func runSearch(args []string) error {
 	if err != nil {
 		return err
 	}
-	files, err := codex.SearchCandidateFiles(home, query)
-	if err != nil {
-		return fmt.Errorf("discover search candidates: %w", err)
-	}
-	var includeSession func(codex.Session) bool
-	if strings.TrimSpace(*projectFlag) != "" || strings.TrimSpace(*sourceFlag) != "" {
-		includeSession = func(session codex.Session) bool {
-			return matchesSearchFilters(session, *projectFlag, *sourceFlag)
-		}
-	}
-	candidates := codex.RankCandidateFiles(files, includeSession)
-
-	matches, searchErrors := codex.SearchFiles(candidates, query, *limitFlag)
-	for _, searchErr := range searchErrors {
-		fmt.Fprintf(os.Stderr, "cxq: warning: %v\n", searchErr)
-	}
-
-	sort.Slice(matches, func(i, j int) bool {
-		return matches[i].Session.Timestamp.After(matches[j].Session.Timestamp)
+	result, err := codex.Search(home, codex.SearchOptions{
+		Query:   query,
+		Limit:   *limitFlag,
+		Project: *projectFlag,
+		Source:  *sourceFlag,
 	})
+	if err != nil {
+		return err
+	}
+	for _, searchErr := range result.Warnings {
+		fmt.Fprintf(c.stderr, "cxq: warning: %v\n", searchErr)
+	}
 
-	writer := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	writer := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(writer, "DATE\tPROJECT\tSOURCE\tROLE\tSESSION\tMATCH")
-	for _, match := range matches {
+	for _, match := range result.Matches {
 		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			formatDate(match.Session), match.Session.Project(), match.Session.Source, match.Role, match.Session.ID, match.Snippet)
 	}
@@ -152,15 +145,15 @@ func runSearch(args []string) error {
 		return err
 	}
 
-	if len(searchErrors) > 0 {
-		fmt.Fprintf(os.Stderr, "cxq: skipped %d unreadable session file(s)\n", len(searchErrors))
+	if len(result.Warnings) > 0 {
+		fmt.Fprintf(c.stderr, "cxq: skipped %d unreadable session file(s)\n", len(result.Warnings))
 	}
 	return nil
 }
 
-func runShow(args []string) error {
+func (c cliRunner) runShow(args []string) error {
 	flags := flag.NewFlagSet("show", flag.ContinueOnError)
-	flags.SetOutput(os.Stderr)
+	flags.SetOutput(c.stderr)
 	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -173,7 +166,7 @@ func runShow(args []string) error {
 	if err != nil {
 		return err
 	}
-	session, err := codex.ResolveSession(home, flags.Arg(0))
+	session, err := codex.NewCatalog(home).Resolve(flags.Arg(0))
 	if err != nil {
 		return err
 	}
@@ -182,7 +175,7 @@ func runShow(args []string) error {
 		return fmt.Errorf("read conversation: %w", err)
 	}
 
-	writer := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	writer := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintf(writer, "SESSION\t%s\n", session.ID)
 	fmt.Fprintf(writer, "DATE\t%s\n", formatDate(session))
 	fmt.Fprintf(writer, "PROJECT\t%s\n", session.Project())
@@ -194,7 +187,7 @@ func runShow(args []string) error {
 	}
 
 	if len(messages) == 0 {
-		fmt.Fprintln(os.Stdout, "\n(no user/assistant messages)")
+		fmt.Fprintln(c.stdout, "\n(no user/assistant messages)")
 		return nil
 	}
 	for _, message := range messages {
@@ -202,14 +195,14 @@ func runShow(args []string) error {
 		if !message.Timestamp.IsZero() {
 			label += " " + message.Timestamp.Local().Format("2006-01-02 15:04:05")
 		}
-		fmt.Fprintf(os.Stdout, "\n[%s]\n%s\n", label, message.Text)
+		fmt.Fprintf(c.stdout, "\n[%s]\n%s\n", label, message.Text)
 	}
 	return nil
 }
 
-func runResume(args []string) error {
+func (c cliRunner) runResume(args []string) error {
 	flags := flag.NewFlagSet("resume", flag.ContinueOnError)
-	flags.SetOutput(os.Stderr)
+	flags.SetOutput(c.stderr)
 	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -222,16 +215,16 @@ func runResume(args []string) error {
 	if err != nil {
 		return err
 	}
-	session, err := codex.ResolveSession(home, flags.Arg(0))
+	session, err := codex.NewCatalog(home).Resolve(flags.Arg(0))
 	if err != nil {
 		return err
 	}
-	return resumeSession(home, session)
+	return c.resumeSession(home, session)
 }
 
-func runOpen(args []string) error {
+func (c cliRunner) runOpen(args []string) error {
 	flags := flag.NewFlagSet("open", flag.ContinueOnError)
-	flags.SetOutput(os.Stderr)
+	flags.SetOutput(c.stderr)
 	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
 	targetFlag := flags.String("target", "auto", "open target: auto, vscode, or cli")
 	schemeFlag := flags.String("vscode-scheme", "vscode", "VS Code URI scheme: vscode or vscode-insiders")
@@ -246,7 +239,7 @@ func runOpen(args []string) error {
 	if err != nil {
 		return err
 	}
-	session, err := codex.ResolveSession(home, flags.Arg(0))
+	session, err := codex.NewCatalog(home).Resolve(flags.Arg(0))
 	if err != nil {
 		return err
 	}
@@ -255,7 +248,7 @@ func runOpen(args []string) error {
 		return err
 	}
 	if target == "cli" {
-		return resumeSession(home, session)
+		return c.resumeSession(home, session)
 	}
 
 	conversationURL, err := vscodeConversationURL(*schemeFlag, session.ID)
@@ -265,21 +258,21 @@ func runOpen(args []string) error {
 	return openConversationURL(conversationURL)
 }
 
-func resumeSession(home string, session codex.Session) error {
+func (c cliRunner) resumeSession(home string, session codex.Session) error {
 	cmd := exec.Command("codex", "resume", session.ID)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdin = c.stdin
+	cmd.Stdout = c.stdout
+	cmd.Stderr = c.stderr
 	cmdEnv := withCodexHome(os.Environ(), home)
 	cmdEnv, cleanup, shimErr := withWSLTermProgramProbeShim(cmdEnv, exec.LookPath)
 	if shimErr != nil {
-		fmt.Fprintf(os.Stderr, "cxq: warning: prepare WSL terminal probe: %v\n", shimErr)
+		fmt.Fprintf(c.stderr, "cxq: warning: prepare WSL terminal probe: %v\n", shimErr)
 	} else {
 		defer cleanup()
 	}
 	cmd.Env = cmdEnv
 	if dir, dirErr := resolveResumeDir(session.CWD); dirErr != nil {
-		fmt.Fprintf(os.Stderr, "cxq: warning: session cwd %q is unavailable (%v); resuming from current directory\n", session.CWD, dirErr)
+		fmt.Fprintf(c.stderr, "cxq: warning: session cwd %q is unavailable (%v); resuming from current directory\n", session.CWD, dirErr)
 	} else if dir != "" {
 		cmd.Dir = dir
 	}
@@ -529,18 +522,6 @@ func withCodexHome(env []string, home string) []string {
 	return result
 }
 
-func matchesSearchFilters(session codex.Session, project, source string) bool {
-	project = strings.TrimSpace(project)
-	source = strings.TrimSpace(source)
-	if project != "" && !strings.EqualFold(session.Project(), project) {
-		return false
-	}
-	if source != "" && !strings.EqualFold(session.Source, source) {
-		return false
-	}
-	return true
-}
-
 func formatDate(session codex.Session) string {
 	if session.Timestamp.IsZero() {
 		return "-"
@@ -555,8 +536,8 @@ func emptyDash(value string) string {
 	return value
 }
 
-func printUsage() {
-	fmt.Fprintln(os.Stderr, `codex-recall (cxq)
+func (c cliRunner) printUsage() {
+	fmt.Fprintln(c.stderr, `codex-recall (cxq)
 
 Usage:
   cxq list [--home PATH]

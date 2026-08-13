@@ -1,13 +1,10 @@
 package codex
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -24,6 +21,18 @@ type SearchMatch struct {
 	Snippet string
 }
 
+type SearchOptions struct {
+	Query   string
+	Limit   int
+	Project string
+	Source  string
+}
+
+type SearchResult struct {
+	Matches  []SearchMatch
+	Warnings []error
+}
+
 type responseMessage struct {
 	Type    string `json:"type"`
 	Role    string `json:"role"`
@@ -38,8 +47,44 @@ type eventMessage struct {
 	Message string `json:"message"`
 }
 
-// SearchFiles scans ordered candidates until it reaches limit.
-func SearchFiles(candidates []SearchCandidate, query string, limit int) ([]SearchMatch, []error) {
+// Search finds the newest conversation matches that satisfy the options.
+func Search(home string, options SearchOptions) (SearchResult, error) {
+	if options.Limit <= 0 {
+		return SearchResult{}, errors.New("search limit must be greater than zero")
+	}
+	if strings.TrimSpace(options.Query) == "" {
+		return SearchResult{}, errors.New("search query must not be empty")
+	}
+
+	paths, err := searchCandidateFiles(home, options.Query, exec.LookPath, runCommand)
+	if err != nil {
+		return SearchResult{}, fmt.Errorf("discover search candidates: %w", err)
+	}
+	var include func(Session) bool
+	if strings.TrimSpace(options.Project) != "" || strings.TrimSpace(options.Source) != "" {
+		include = func(session Session) bool {
+			return matchesSessionFilters(session, options.Project, options.Source)
+		}
+	}
+	candidates := NewCatalog(home).rankCandidates(paths, include)
+	matches, warnings := searchFiles(candidates, options.Query, options.Limit)
+	return SearchResult{Matches: matches, Warnings: warnings}, nil
+}
+
+func matchesSessionFilters(session Session, project, source string) bool {
+	project = strings.TrimSpace(project)
+	source = strings.TrimSpace(source)
+	if project != "" && !strings.EqualFold(session.Project(), project) {
+		return false
+	}
+	if source != "" && !strings.EqualFold(session.Source, source) {
+		return false
+	}
+	return true
+}
+
+// searchFiles scans ordered candidates until it reaches limit.
+func searchFiles(candidates []SearchCandidate, query string, limit int) ([]SearchMatch, []error) {
 	if limit <= 0 {
 		return nil, []error{errors.New("search limit must be greater than zero")}
 	}
@@ -95,48 +140,33 @@ func compileSearchMatcher(query string) (*regexp.Regexp, error) {
 
 func searchFile(path string, matcher *regexp.Regexp, session *Session) (SearchMatch, bool, error) {
 
-	file, err := os.Open(path)
+	var match SearchMatch
+	found := false
+	err := visitRolloutFile(path, func(rec record) (bool, error) {
+		role, text := conversationText(rec)
+		if text == "" {
+			return false, nil
+		}
+		normalized := normalizePreviewText(text)
+		loc := matcher.FindStringIndex(normalized)
+		if loc == nil {
+			return false, nil
+		}
+		if session == nil {
+			parsed, metaErr := ParseFile(path)
+			if metaErr != nil {
+				return false, metaErr
+			}
+			session = &parsed
+		}
+		match = SearchMatch{Session: *session, Role: role, Snippet: excerptAroundMatch(normalized, loc[0], loc[1])}
+		found = true
+		return true, nil
+	})
 	if err != nil {
 		return SearchMatch{}, false, err
 	}
-	defer file.Close()
-
-	reader := bufio.NewReader(file)
-	for {
-		line, readErr := reader.ReadBytes('\n')
-		if len(line) > 0 {
-			var rec record
-			if json.Unmarshal(bytes.TrimSpace(line), &rec) == nil {
-				role, text := conversationText(rec)
-				if text != "" {
-					normalized := normalizePreviewText(text)
-					if loc := matcher.FindStringIndex(normalized); loc != nil {
-						if session == nil {
-							parsed, metaErr := ParseFile(path)
-							if metaErr != nil {
-								return SearchMatch{}, false, metaErr
-							}
-							session = &parsed
-						}
-						return SearchMatch{
-							Session: *session,
-							Role:    role,
-							Snippet: excerptAroundMatch(normalized, loc[0], loc[1]),
-						}, true, nil
-					}
-				}
-			}
-		}
-
-		if errors.Is(readErr, io.EOF) {
-			break
-		}
-		if readErr != nil {
-			return SearchMatch{}, false, readErr
-		}
-	}
-
-	return SearchMatch{}, false, nil
+	return match, found, nil
 }
 
 func conversationText(rec record) (string, string) {
