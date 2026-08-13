@@ -12,7 +12,7 @@ func TestResolveSessionExactAndUniquePrefix(t *testing.T) {
 	writeLookupSession(t, home, "sessions", rolloutLookupName("2026-08-12T01-00-00", "019abc111"), "019abc111", "2026-08-12T01:00:00Z", "/tmp/alpha")
 	writeLookupSession(t, home, "sessions", rolloutLookupName("2026-08-12T02-00-00", "019def222"), "019def222", "2026-08-12T02:00:00Z", "/tmp/beta")
 
-	exact, err := ResolveSession(home, "019abc111")
+	exact, err := NewCatalog(home).Resolve("019abc111")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,7 +20,7 @@ func TestResolveSessionExactAndUniquePrefix(t *testing.T) {
 		t.Fatalf("exact = %#v", exact)
 	}
 
-	prefix, err := ResolveSession(home, "019def")
+	prefix, err := NewCatalog(home).Resolve("019def")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestResolveSessionRejectsAmbiguousPrefix(t *testing.T) {
 	writeLookupSession(t, home, "sessions", rolloutLookupName("2026-08-12T01-00-00", "019abc111"), "019abc111", "2026-08-12T01:00:00Z", "/tmp/alpha")
 	writeLookupSession(t, home, "sessions", rolloutLookupName("2026-08-12T02-00-00", "019abc222"), "019abc222", "2026-08-12T02:00:00Z", "/tmp/beta")
 
-	_, err := ResolveSession(home, "019abc")
+	_, err := NewCatalog(home).Resolve("019abc")
 	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("ResolveSession() error = %v", err)
 	}
@@ -44,7 +44,7 @@ func TestResolveSessionNotFound(t *testing.T) {
 	home := t.TempDir()
 	writeLookupSession(t, home, "sessions", rolloutLookupName("2026-08-12T01-00-00", "019abc111"), "019abc111", "2026-08-12T01:00:00Z", "/tmp/alpha")
 
-	_, err := ResolveSession(home, "deadbeef")
+	_, err := NewCatalog(home).Resolve("deadbeef")
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("ResolveSession() error = %v", err)
 	}
@@ -56,7 +56,7 @@ func TestResolveSessionDeduplicatesSameID(t *testing.T) {
 	writeLookupSession(t, home, "archived_sessions", name, "019same", "2026-08-11T01:00:00Z", "/tmp/old")
 	writeLookupSession(t, home, "sessions", name, "019same", "2026-08-12T01:00:00Z", "/tmp/new")
 
-	session, err := ResolveSession(home, "019same")
+	session, err := NewCatalog(home).Resolve("019same")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestResolveSessionKeepsNonstandardFilenameCompatibility(t *testing.T) {
 	home := t.TempDir()
 	writeLookupSession(t, home, "sessions", "imported-history.jsonl", "019legacy444", "2026-08-12T01:00:00Z", "/tmp/legacy")
 
-	session, err := ResolveSession(home, "019legacy")
+	session, err := NewCatalog(home).Resolve("019legacy")
 	if err != nil {
 		t.Fatal(err)
 	}

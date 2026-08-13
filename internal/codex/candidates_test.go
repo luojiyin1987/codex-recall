@@ -181,7 +181,7 @@ func TestRankCandidateFilesUsesMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := rankCandidateFiles([]string{older, other, broken, newer}, func(session Session) bool {
+	got := NewCatalog(home).rankCandidates([]string{older, other, broken, newer}, func(session Session) bool {
 		return session.Project() == "lint-md"
 	})
 	want := []string{newer, older, broken}
