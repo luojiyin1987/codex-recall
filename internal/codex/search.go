@@ -39,16 +39,20 @@ type eventMessage struct {
 }
 
 // SearchFiles scans ordered candidates until it reaches limit.
-func SearchFiles(paths []string, query string, limit int) ([]SearchMatch, []error) {
+func SearchFiles(candidates []SearchCandidate, query string, limit int) ([]SearchMatch, []error) {
 	if limit <= 0 {
 		return nil, []error{errors.New("search limit must be greater than zero")}
 	}
 
-	capacity := min(limit, len(paths))
+	capacity := min(limit, len(candidates))
 	matches := make([]SearchMatch, 0, capacity)
 	var searchErrors []error
-	for _, path := range paths {
-		match, ok, err := SearchFile(path, query)
+	for _, candidate := range candidates {
+		var session *Session
+		if candidate.hasSession {
+			session = &candidate.session
+		}
+		match, ok, err := searchFile(candidate.Path, query, session)
 		if err != nil {
 			searchErrors = append(searchErrors, err)
 			continue
@@ -67,6 +71,10 @@ func SearchFiles(paths []string, query string, limit int) ([]SearchMatch, []erro
 // SearchFile returns the first user/assistant conversation match in a rollout.
 // Tool output, reasoning, and metadata are intentionally excluded.
 func SearchFile(path, query string) (SearchMatch, bool, error) {
+	return searchFile(path, query, nil)
+}
+
+func searchFile(path, query string, session *Session) (SearchMatch, bool, error) {
 	if strings.TrimSpace(query) == "" {
 		return SearchMatch{}, false, errors.New("search query must not be empty")
 	}
@@ -92,12 +100,15 @@ func SearchFile(path, query string) (SearchMatch, bool, error) {
 				if text != "" {
 					normalized := normalizePreviewText(text)
 					if loc := matcher.FindStringIndex(normalized); loc != nil {
-						session, metaErr := ParseFile(path)
-						if metaErr != nil {
-							return SearchMatch{}, false, metaErr
+						if session == nil {
+							parsed, metaErr := ParseFile(path)
+							if metaErr != nil {
+								return SearchMatch{}, false, metaErr
+							}
+							session = &parsed
 						}
 						return SearchMatch{
-							Session: session,
+							Session: *session,
 							Role:    role,
 							Snippet: excerptAroundMatch(normalized, loc[0], loc[1]),
 						}, true, nil

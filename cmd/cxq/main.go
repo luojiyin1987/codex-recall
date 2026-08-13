@@ -131,9 +131,9 @@ func runSearch(args []string) error {
 			return matchesSearchFilters(session, *projectFlag, *sourceFlag)
 		}
 	}
-	files = codex.RankCandidateFiles(files, includeSession)
+	candidates := codex.RankCandidateFiles(files, includeSession)
 
-	matches, searchErrors := codex.SearchFiles(files, query, *limitFlag)
+	matches, searchErrors := codex.SearchFiles(candidates, query, *limitFlag)
 	for _, searchErr := range searchErrors {
 		fmt.Fprintf(os.Stderr, "cxq: warning: %v\n", searchErr)
 	}

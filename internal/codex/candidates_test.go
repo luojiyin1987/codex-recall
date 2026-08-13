@@ -43,7 +43,7 @@ func TestSearchCandidateFilesUsesRipgrepResults(t *testing.T) {
 		t.Fatalf("candidates = %#v", got)
 	}
 	joined := strings.Join(gotArgs, " ")
-	for _, want := range []string{"-l", "-0", "--fixed-strings", "--ignore-case", "--no-ignore", "*.jsonl", `annotated \"tag\"`, root} {
+	for _, want := range []string{"-l", "-0", "--pcre2", "--ignore-case", "--no-ignore", "*.jsonl", "response_item", "event_msg", `annotated \\"tag\\"`, root} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("args %q missing %q", joined, want)
 		}
@@ -94,6 +94,37 @@ func TestSearchCandidateFilesFallsBackWhenRipgrepFails(t *testing.T) {
 	}
 }
 
+func TestSearchCandidateFilesExcludesToolOnlyMatches(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg is not installed")
+	}
+	if err := exec.Command("rg", "--pcre2-version").Run(); err != nil {
+		t.Skip("rg does not support PCRE2")
+	}
+
+	home := t.TempDir()
+	root := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	conversation := filepath.Join(root, "conversation.jsonl")
+	tool := filepath.Join(root, "tool.jsonl")
+	writeSearchFixture(t, root, filepath.Base(conversation), []string{
+		`{"payload":{"role":"user","content":[{"text":"release \"tag\"","type":"input_text"}],"type":"message"},"type":"response_item"}`,
+	})
+	writeSearchFixture(t, root, filepath.Base(tool), []string{
+		`{"payload":{"type":"function_call_output","output":"release \"tag\""},"type":"response_item"}`,
+	})
+
+	got, err := SearchCandidateFiles(home, `release "tag"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []string{conversation}) {
+		t.Fatalf("SearchCandidateFiles() = %#v, want [%s]", got, conversation)
+	}
+}
+
 func TestParseRipgrepPathsSortsNullDelimitedOutput(t *testing.T) {
 	got := parseRipgrepPaths([]byte("b.jsonl\x00a.jsonl\x00"))
 	want := []string{"a.jsonl", "b.jsonl"}
@@ -124,8 +155,11 @@ func TestRankCandidateFilesUsesMetadata(t *testing.T) {
 		return session.Project() == "lint-md"
 	})
 	want := []string{newer, older, broken}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("RankCandidateFiles() = %#v, want %#v", got, want)
+	if gotPaths := candidatePaths(got); !reflect.DeepEqual(gotPaths, want) {
+		t.Fatalf("RankCandidateFiles() paths = %#v, want %#v", gotPaths, want)
+	}
+	if !got[0].hasSession || !got[1].hasSession || got[2].hasSession {
+		t.Fatalf("RankCandidateFiles() metadata = %#v", got)
 	}
 }
 
@@ -202,6 +236,14 @@ func writeSearchFixture(t *testing.T, root, name string, lines []string) {
 	if err := os.WriteFile(filepath.Join(root, name), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func candidatePaths(candidates []SearchCandidate) []string {
+	paths := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		paths = append(paths, candidate.Path)
+	}
+	return paths
 }
 
 func writeCandidateSession(t *testing.T, path, id, timestamp, cwd, source string) {

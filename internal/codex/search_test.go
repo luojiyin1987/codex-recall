@@ -127,7 +127,7 @@ func TestSearchFilesStopsAtLimit(t *testing.T) {
 		}
 	}
 
-	matches, errs := SearchFiles([]string{first, second, missing}, "needle", 2)
+	matches, errs := SearchFiles(searchCandidates(first, second, missing), "needle", 2)
 	if len(errs) != 0 {
 		t.Fatalf("SearchFiles() errors = %v", errs)
 	}
@@ -146,11 +146,36 @@ func TestSearchFilesBoundsCapacityByCandidateCount(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matches, errs := SearchFiles([]string{path}, "needle", 1024)
+	matches, errs := SearchFiles(searchCandidates(path), "needle", 1024)
 	if len(errs) != 0 {
 		t.Fatalf("SearchFiles() errors = %v", errs)
 	}
 	if cap(matches) > 1 {
 		t.Fatalf("cap(matches) = %d, want at most 1", cap(matches))
 	}
+}
+
+func TestSearchFilesReusesCandidateMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "message-only.jsonl")
+	input := `{"type":"event_msg","payload":{"type":"user_message","message":"needle"}}` + "\n"
+	if err := os.WriteFile(path, []byte(input), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	session := Session{ID: "cached", Path: path}
+
+	matches, errs := SearchFiles([]SearchCandidate{{Path: path, session: session, hasSession: true}}, "needle", 1)
+	if len(errs) != 0 {
+		t.Fatalf("SearchFiles() errors = %v", errs)
+	}
+	if len(matches) != 1 || matches[0].Session.ID != "cached" {
+		t.Fatalf("SearchFiles() matches = %#v", matches)
+	}
+}
+
+func searchCandidates(paths ...string) []SearchCandidate {
+	candidates := make([]SearchCandidate, 0, len(paths))
+	for _, path := range paths {
+		candidates = append(candidates, SearchCandidate{Path: path})
+	}
+	return candidates
 }
