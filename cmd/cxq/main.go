@@ -67,11 +67,13 @@ func (c cliRunner) runList(args []string) error {
 	flags := flag.NewFlagSet("list", flag.ContinueOnError)
 	flags.SetOutput(c.stderr)
 	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
+	projectFlag := flags.String("project", "", "only sessions whose project exactly matches this value")
+	sourceFlag := flags.String("source", "", "only sessions whose source exactly matches this value")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return fmt.Errorf("list does not accept positional arguments")
+		return fmt.Errorf("list does not accept positional arguments; to search conversation text, use cxq search [OPTIONS] QUERY")
 	}
 
 	home, err := resolveHome(*homeFlag)
@@ -90,6 +92,9 @@ func (c cliRunner) runList(args []string) error {
 	writer := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(writer, "DATE\tPROJECT\tSOURCE\tSESSION")
 	for _, session := range sessions {
+		if !matchesListFilters(session, *projectFlag, *sourceFlag) {
+			continue
+		}
 		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", formatDate(session), session.Project(), session.Source, session.ID)
 	}
 	if err := writer.Flush(); err != nil {
@@ -102,6 +107,18 @@ func (c cliRunner) runList(args []string) error {
 	return nil
 }
 
+func matchesListFilters(session codex.Session, project, source string) bool {
+	project = strings.TrimSpace(project)
+	source = strings.TrimSpace(source)
+	if project != "" && !strings.EqualFold(session.Project(), project) {
+		return false
+	}
+	if source != "" && !strings.EqualFold(session.Source, source) {
+		return false
+	}
+	return true
+}
+
 func (c cliRunner) runSearch(args []string) error {
 	flags := flag.NewFlagSet("search", flag.ContinueOnError)
 	flags.SetOutput(c.stderr)
@@ -112,8 +129,11 @@ func (c cliRunner) runSearch(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() != 1 || strings.TrimSpace(flags.Arg(0)) == "" {
-		return fmt.Errorf("usage: cxq search [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY")
+	if flags.NArg() == 0 || strings.TrimSpace(flags.Arg(0)) == "" {
+		return fmt.Errorf("search requires QUERY; to list sessions without a text query, use cxq list [--project PROJECT] [--source SOURCE]")
+	}
+	if flags.NArg() != 1 {
+		return fmt.Errorf("search accepts exactly one QUERY; usage: cxq search [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY")
 	}
 	if *limitFlag <= 0 {
 		return fmt.Errorf("limit must be greater than zero")
@@ -542,7 +562,7 @@ func (c cliRunner) printUsage() {
 	fmt.Fprintln(c.stderr, `codex-recall (cxq)
 
 Usage:
-  cxq list [--home PATH]
+  cxq list [--home PATH] [--project PROJECT] [--source SOURCE]
   cxq search [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
   cxq show [--home PATH] SESSION
   cxq resume [--home PATH] SESSION
@@ -550,11 +570,15 @@ Usage:
   cxq version
 
 Commands:
-  list    Discover and list local Codex sessions
+  list    Discover and list local Codex sessions, optionally filtered
   search  Search user and assistant conversation text
   show    Show user and assistant messages from a session
   resume  Resume a session with the official Codex CLI
   open    Open a session in its source client
   version Show the cxq version
-  help    Show this help`)
+  help    Show this help
+
+Examples:
+  cxq list --project deepseek-harness-remote
+  cxq search --project deepseek-harness-remote "WebRTC"`)
 }
