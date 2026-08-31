@@ -44,7 +44,12 @@ List local sessions:
 
 ```bash
 cxq list
+cxq list --project deepseek-harness-remote
+cxq list --source vscode
+cxq list --project deepseek-harness-remote --source vscode
 ```
+
+`list` can filter sessions without requiring a conversation-text query. `--project` and `--source` use case-insensitive exact matching after trimming surrounding whitespace. When both are supplied, both conditions must match.
 
 Search conversation text:
 
@@ -71,7 +76,7 @@ cxq search --limit 10000 "Promise"
 
 The limit is a maximum result count. A large limit scans all candidates when fewer matching sessions exist.
 
-`--project` and `--source` are optional case-insensitive exact-match filters over the displayed `PROJECT` and `SOURCE` values. When both are supplied, both conditions must match.
+`cxq search` also accepts `--project` and `--source` as case-insensitive exact-match filters over the displayed `PROJECT` and `SOURCE` values. When both are supplied, both conditions must match. Unlike `list`, `search` always requires exactly one non-blank `QUERY`.
 
 ```text
 DATE              PROJECT       SOURCE  ROLE  SESSION                               MATCH
@@ -171,6 +176,7 @@ An alternate Codex home can be supplied explicitly:
 
 ```bash
 cxq list --home /path/to/.codex
+cxq list --home /path/to/.codex --project deepseek-harness-remote
 cxq search --home /path/to/.codex "Promise"
 cxq show --home /path/to/.codex 019fe0cb
 cxq resume --home /path/to/.codex 019fe0cb
