@@ -129,11 +129,14 @@ func (c cliRunner) runSearch(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() == 0 || strings.TrimSpace(flags.Arg(0)) == "" {
+	if flags.NArg() == 0 {
 		return fmt.Errorf("search requires QUERY; to list sessions without a text query, use cxq list [--project PROJECT] [--source SOURCE]")
 	}
 	if flags.NArg() != 1 {
 		return fmt.Errorf("search accepts exactly one QUERY; usage: cxq search [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY")
+	}
+	if strings.TrimSpace(flags.Arg(0)) == "" {
+		return fmt.Errorf("search requires a non-blank QUERY")
 	}
 	if *limitFlag <= 0 {
 		return fmt.Errorf("limit must be greater than zero")
