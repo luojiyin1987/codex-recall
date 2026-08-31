@@ -58,6 +58,37 @@ func TestCLIRunnerSearchWithoutQueryPointsToList(t *testing.T) {
 	}
 }
 
+func TestCLIRunnerSearchRejectsExtraPositionalBeforeBlankQuery(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+
+	err := runner.run([]string{"search", "", "WebRTC"})
+	if err == nil {
+		t.Fatal("search accepted multiple positional arguments")
+	}
+	if !strings.Contains(err.Error(), "search accepts exactly one QUERY") {
+		t.Fatalf("search error = %q", err)
+	}
+	if strings.Contains(err.Error(), "cxq list") {
+		t.Fatalf("extra-argument error incorrectly points to list: %q", err)
+	}
+}
+
+func TestCLIRunnerSearchRejectsBlankSingleQuery(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+
+	err := runner.run([]string{"search", "   "})
+	if err == nil {
+		t.Fatal("search accepted a blank QUERY")
+	}
+	if !strings.Contains(err.Error(), "non-blank QUERY") {
+		t.Fatalf("search error = %q", err)
+	}
+}
+
 func TestCLIRunnerListPositionalPointsToSearch(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
