@@ -1,6 +1,6 @@
 module github.com/luojiyin1987/codex-recall
 
-go 1.24
+go 1.23
 
 require modernc.org/sqlite v1.34.5
 
