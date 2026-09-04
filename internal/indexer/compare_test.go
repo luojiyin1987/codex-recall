@@ -131,3 +131,108 @@ func TestCompareAppliesLimitToSessionsOnBothBackends(t *testing.T) {
 		t.Fatalf("index counts = results %d sessions %d", result.IndexResults, result.IndexSessions)
 	}
 }
+
+func TestCompareCoversChineseAndCodeQueryShapes(t *testing.T) {
+	home := t.TempDir()
+	cases := []struct {
+		name  string
+		id    string
+		text  string
+		query string
+	}{
+		{name: "chinese exact token", id: "shape-chinese", text: "批量事务", query: "批量事务"},
+		{name: "camel case", id: "shape-camel", text: "callbackInfo remains stable", query: "callbackInfo"},
+		{name: "snake case", id: "shape-snake", text: "callback_info remains stable", query: "callback_info"},
+		{name: "path", id: "shape-path", text: "inspect internal/index/sqlite.go", query: "internal/index/sqlite.go"},
+		{name: "punctuated error", id: "shape-error", text: "dyld: missing LC_UUID load command", query: "missing LC_UUID load command"},
+		{name: "uuid", id: "shape-uuid", text: "session 019fe0cb-9760-78b1-b545-b5e90d1dd0d7", query: "019fe0cb-9760-78b1-b545-b5e90d1dd0d7"},
+		{name: "commit sha", id: "shape-sha", text: "commit 49bcc7e8ab386d700cb8ccfa5a5b72d97528898f", query: "49bcc7e8ab386d700cb8ccfa5a5b72d97528898f"},
+		{name: "method call", id: "shape-method", text: "transport.send() failed", query: "transport.send()"},
+		{name: "hyphenated text", id: "shape-hyphen", text: "foo-bar phrase", query: "foo-bar"},
+	}
+	for _, tc := range cases {
+		writeRollout(t, home, tc.id, tc.text, "answer")
+	}
+	if _, err := Refresh(context.Background(), home, RefreshOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := Compare(context.Background(), home, CompareOptions{
+				Query: tc.query,
+				Limit: 20,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.LiveSessions != 1 || result.IndexSessions != 1 {
+				t.Fatalf("session counts = live %d index %d for query %q", result.LiveSessions, result.IndexSessions, tc.query)
+			}
+			if result.Overlap != 1 || result.LiveOnly != 0 || result.IndexOnly != 0 {
+				t.Fatalf("comparison = overlap %d live-only %d index-only %d for query %q",
+					result.Overlap, result.LiveOnly, result.IndexOnly, tc.query)
+			}
+			if len(result.Entries) != 1 || result.Entries[0].Status != CompareBoth || result.Entries[0].SessionID != tc.id {
+				t.Fatalf("entries = %#v for query %q", result.Entries, tc.query)
+			}
+		})
+	}
+}
+
+func TestCompareDocumentsUnicode61SubstringBoundaries(t *testing.T) {
+	cases := []struct {
+		name  string
+		text  string
+		query string
+	}{
+		{
+			name:  "chinese substring inside continuous text",
+			text:  "我们使用批量事务写入索引",
+			query: "批量事务",
+		},
+		{
+			name:  "camel case prefix",
+			text:  "callbackInfo remains stable",
+			query: "callback",
+		},
+		{
+			name:  "uuid partial token",
+			text:  "019fe0cb-9760-78b1-b545-b5e90d1dd0d7",
+			query: "019fe0",
+		},
+		{
+			name:  "commit sha prefix",
+			text:  "49bcc7e8ab386d700cb8ccfa5a5b72d97528898f",
+			query: "49bcc7e8",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeRollout(t, home, "boundary-session", tc.text, "answer")
+			if _, err := Refresh(context.Background(), home, RefreshOptions{}); err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := Compare(context.Background(), home, CompareOptions{
+				Query: tc.query,
+				Limit: 20,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.LiveSessions != 1 || result.IndexSessions != 0 {
+				t.Fatalf("session counts = live %d index %d for query %q", result.LiveSessions, result.IndexSessions, tc.query)
+			}
+			if result.Overlap != 0 || result.LiveOnly != 1 || result.IndexOnly != 0 {
+				t.Fatalf("comparison = overlap %d live-only %d index-only %d for query %q",
+					result.Overlap, result.LiveOnly, result.IndexOnly, tc.query)
+			}
+			if len(result.Entries) != 1 || result.Entries[0].Status != CompareLiveOnly {
+				t.Fatalf("entries = %#v for query %q", result.Entries, tc.query)
+			}
+		})
+	}
+}
