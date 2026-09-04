@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"time"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -168,6 +169,8 @@ func (c cliRunner) runSearch(args []string) error {
 	limitFlag := flags.Int("limit", 20, "maximum number of matching sessions to display")
 	projectFlag := flags.String("project", "", "only sessions whose project exactly matches this value")
 	sourceFlag := flags.String("source", "", "only sessions whose source exactly matches this value")
+	indexFlag := flags.Bool("index", false, "search the derived SQLite FTS index instead of live rollout files")
+	dbFlag := flags.String("db", "", "SQLite index path for --index (default: CODEX_HOME/.codex-recall/index.db)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -175,7 +178,7 @@ func (c cliRunner) runSearch(args []string) error {
 		return fmt.Errorf("search requires QUERY; to list sessions without a text query, use cxq list [--project PROJECT] [--source SOURCE]")
 	}
 	if flags.NArg() != 1 {
-		return fmt.Errorf("search accepts exactly one QUERY; usage: cxq search [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY")
+		return fmt.Errorf("search accepts exactly one QUERY; usage: cxq search [--index] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY")
 	}
 	if strings.TrimSpace(flags.Arg(0)) == "" {
 		return fmt.Errorf("search requires a non-blank QUERY")
@@ -184,11 +187,35 @@ func (c cliRunner) runSearch(args []string) error {
 		return fmt.Errorf("limit must be greater than zero")
 	}
 	query := flags.Arg(0)
+	if !*indexFlag && strings.TrimSpace(*dbFlag) != "" {
+		return fmt.Errorf("--db requires --index")
+	}
 
 	home, err := resolveHome(*homeFlag)
 	if err != nil {
 		return err
 	}
+	if *indexFlag {
+		result, err := indexer.Search(context.Background(), home, indexer.SearchOptions{
+			DatabasePath: *dbFlag,
+			Query:        query,
+			Limit:        *limitFlag,
+			Project:      *projectFlag,
+			Source:       *sourceFlag,
+		})
+		if err != nil {
+			return err
+		}
+
+		writer := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(writer, "DATE\tPROJECT\tSOURCE\tROLE\tSESSION\tMATCH")
+		for _, match := range result.Matches {
+			fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\n",
+				formatTimestamp(match.Session.Timestamp), match.Session.Project, match.Session.Source, match.Role, match.Session.ID, match.Snippet)
+		}
+		return writer.Flush()
+	}
+
 	result, err := codex.Search(home, codex.SearchOptions{
 		Query:   query,
 		Limit:   *limitFlag,
@@ -590,10 +617,14 @@ func withCodexHome(env []string, home string) []string {
 }
 
 func formatDate(session codex.Session) string {
-	if session.Timestamp.IsZero() {
+	return formatTimestamp(session.Timestamp)
+}
+
+func formatTimestamp(timestamp time.Time) string {
+	if timestamp.IsZero() {
 		return "-"
 	}
-	return session.Timestamp.Local().Format("2006-01-02 15:04")
+	return timestamp.Local().Format("2006-01-02 15:04")
 }
 
 func emptyDash(value string) string {
@@ -609,7 +640,7 @@ func (c cliRunner) printUsage() {
 Usage:
   cxq index [--home PATH] [--db PATH]
   cxq list [--home PATH] [--project PROJECT] [--source SOURCE]
-  cxq search [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
+  cxq search [--index] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
   cxq show [--home PATH] SESSION
   cxq resume [--home PATH] SESSION
   cxq open [--home PATH] [--target TARGET] [--vscode-scheme SCHEME] SESSION
@@ -618,7 +649,7 @@ Usage:
 Commands:
   index   Build or refresh the local derived SQLite index
   list    Discover and list local Codex sessions, optionally filtered
-  search  Search user and assistant conversation text
+  search  Search live conversation text, or the derived FTS index with --index
   show    Show user and assistant messages from a session
   resume  Resume a session with the official Codex CLI
   open    Open a session in its source client
@@ -628,5 +659,5 @@ Commands:
 Examples:
   cxq index
   cxq list --project deepseek-harness-remote
-  cxq search --project deepseek-harness-remote "WebRTC"`)
+  cxq search --project deepseek-harness-remote "WebRTC"\n  cxq search --index --project deepseek-harness-remote "WebRTC"`)
 }

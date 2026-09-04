@@ -482,3 +482,128 @@ func TestCLIRunnerIndexSupportsCustomDatabasePath(t *testing.T) {
 		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
 	}
 }
+
+
+func TestCLIRunnerSearchIndexUsesDerivedFTSWithoutRefreshing(t *testing.T) {
+	home := t.TempDir()
+	sessionID := "019abc11-1234-7abc-8def-0123456789ab"
+	path := filepath.Join(home, "sessions", "2026", "09", "04", "rollout-2026-09-04T07-00-00-"+sessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Join([]string{
+		`{"timestamp":"2026-09-04T07:00:00Z","type":"session_meta","payload":{"id":"` + sessionID + `","timestamp":"2026-09-04T07:00:00Z","cwd":"/tmp/project","source":"vscode"}}`,
+		`{"timestamp":"2026-09-04T07:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"indexed WebRTC transport"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	if err := runner.run([]string{"index", "--home", home}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := runner.run([]string{"search", "--index", "--home", home, "WebRTC transport"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), sessionID) || !strings.Contains(stdout.String(), "indexed WebRTC transport") {
+		t.Fatalf("indexed search stdout = %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("indexed search stderr = %q", stderr.String())
+	}
+
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, writeErr := file.WriteString(`{"timestamp":"2026-09-04T07:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"fresh unindexed phrase"}}` + "\n")
+	closeErr := file.Close()
+	if writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := runner.run([]string{"search", "--index", "--home", home, "fresh unindexed"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stdout.String(), sessionID) {
+		t.Fatalf("indexed search refreshed implicitly: %q", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := runner.run([]string{"search", "--home", home, "fresh unindexed"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), sessionID) {
+		t.Fatalf("live search did not see appended rollout content: %q", stdout.String())
+	}
+}
+
+func TestCLIRunnerSearchIndexRequiresExistingDatabase(t *testing.T) {
+	home := t.TempDir()
+	indexPath := filepath.Join(home, ".codex-recall", "index.db")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	err := runner.run([]string{"search", "--index", "--home", home, "needle"})
+	if err == nil || !strings.Contains(err.Error(), "run cxq index") {
+		t.Fatalf("indexed search error = %v", err)
+	}
+	if _, statErr := os.Stat(indexPath); !os.IsNotExist(statErr) {
+		t.Fatalf("indexed search created database unexpectedly: %v", statErr)
+	}
+}
+
+func TestCLIRunnerSearchIndexSupportsCustomDatabase(t *testing.T) {
+	home := t.TempDir()
+	sessionID := "019abc11-1234-7abc-8def-0123456789ab"
+	path := filepath.Join(home, "sessions", "2026", "09", "04", "rollout-2026-09-04T07-00-00-"+sessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Join([]string{
+		`{"timestamp":"2026-09-04T07:00:00Z","type":"session_meta","payload":{"id":"` + sessionID + `","timestamp":"2026-09-04T07:00:00Z","cwd":"/tmp/project","source":"cli"}}`,
+		`{"timestamp":"2026-09-04T07:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"custom database needle"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	custom := filepath.Join(t.TempDir(), "nested", "custom.db")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	if err := runner.run([]string{"index", "--home", home, "--db", custom}); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if err := runner.run([]string{"search", "--index", "--db", custom, "--home", home, "custom database"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), sessionID) {
+		t.Fatalf("custom indexed search stdout = %q", stdout.String())
+	}
+}
+
+func TestCLIRunnerSearchRejectsDatabaseWithoutIndexMode(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	err := runner.run([]string{"search", "--db", "index.db", "needle"})
+	if err == nil || !strings.Contains(err.Error(), "--db requires --index") {
+		t.Fatalf("search error = %v", err)
+	}
+}
