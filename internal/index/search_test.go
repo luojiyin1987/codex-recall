@@ -139,3 +139,60 @@ func testSearchSession(id, cwd, project, source string, timestamp time.Time) Ses
 		ContentHash: "v1:sha256:" + id,
 	}
 }
+
+
+func TestSQLiteSearchLimitCountsUniqueSessions(t *testing.T) {
+	idx := openTestIndex(t)
+	ctx := context.Background()
+
+	hot := testSearchSession("hot", "/work/hot", "hot", "vscode", time.Date(2026, 9, 4, 8, 0, 0, 0, time.UTC))
+	other := testSearchSession("other", "/work/other", "other", "cli", time.Date(2026, 9, 3, 8, 0, 0, 0, time.UTC))
+
+	if err := idx.ReplaceSession(ctx, hot, []Message{
+		{Ordinal: 0, Role: "user", Text: "needle"},
+		{Ordinal: 1, Role: "assistant", Text: "needle"},
+		{Ordinal: 2, Role: "user", Text: "needle"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.ReplaceSession(ctx, other, []Message{
+		{Ordinal: 0, Role: "assistant", Text: "needle"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, err := idx.Search(ctx, SearchOptions{Query: "needle", Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("len(matches) = %d, want 2 unique sessions: %#v", len(matches), matches)
+	}
+	if matches[0].Session.ID == matches[1].Session.ID {
+		t.Fatalf("search returned duplicate session IDs: %#v", matches)
+	}
+}
+
+func TestSQLiteSearchKeepsBestRankedMessagePerSession(t *testing.T) {
+	idx := openTestIndex(t)
+	ctx := context.Background()
+
+	session := testSearchSession("ranked", "/work/ranked", "ranked", "vscode", time.Now().UTC())
+	if err := idx.ReplaceSession(ctx, session, []Message{
+		{Ordinal: 0, Role: "user", Text: "needle appears with several unrelated words around it"},
+		{Ordinal: 1, Role: "assistant", Text: "needle"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, err := idx.Search(ctx, SearchOptions{Query: "needle", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("matches = %#v", matches)
+	}
+	if matches[0].Ordinal != 1 {
+		t.Fatalf("representative ordinal = %d, want best-ranked ordinal 1: %#v", matches[0].Ordinal, matches[0])
+	}
+}
