@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -285,5 +286,38 @@ func writeCandidateSession(t *testing.T, path, id, timestamp, cwd, source string
 	content := `{"timestamp":"` + timestamp + `","type":"session_meta","payload":{"id":"` + id + `","timestamp":"` + timestamp + `","cwd":"` + cwd + `","source":"` + source + `"}}` + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSearchCandidateFilesContextDoesNotStartWorkAfterCancellation(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, "sessions")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runCalled := false
+	discoverCalled := false
+	_, err := searchCandidateFilesWithContextDependencies(
+		ctx,
+		home,
+		"needle",
+		func(string) (string, error) { return "/fake/rg", nil },
+		func(context.Context, string, ...string) ([]byte, error) {
+			runCalled = true
+			return nil, context.Canceled
+		},
+		func(context.Context, string) ([]string, error) {
+			discoverCalled = true
+			return nil, nil
+		},
+	)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	if runCalled || discoverCalled {
+		t.Fatalf("runCalled = %v, discoverCalled = %v; canceled context should stop before work", runCalled, discoverCalled)
 	}
 }

@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -18,11 +19,19 @@ func NewCatalog(home string) Catalog {
 
 // Sessions returns logical sessions ordered from newest to oldest.
 func (c Catalog) Sessions() ([]Session, []error, error) {
-	paths, err := DiscoverFiles(c.home)
+	return c.SessionsContext(context.Background())
+}
+
+// SessionsContext is Sessions with cooperative cancellation.
+func (c Catalog) SessionsContext(ctx context.Context) ([]Session, []error, error) {
+	paths, err := DiscoverFilesContext(ctx, c.home)
 	if err != nil {
 		return nil, nil, err
 	}
-	byID, unreadable := parseSessions(paths)
+	byID, unreadable, err := parseSessionsContext(ctx, paths)
+	if err != nil {
+		return nil, nil, err
+	}
 	sessions := make([]Session, 0, len(byID))
 	for _, session := range byID {
 		sessions = append(sessions, session)
@@ -68,7 +77,15 @@ func (c Catalog) Resolve(selector string) (Session, error) {
 }
 
 func (c Catalog) rankCandidates(paths []string, include func(Session) bool) []SearchCandidate {
-	byID, unreadable := parseSessions(paths)
+	ranked, _ := c.rankCandidatesContext(context.Background(), paths, include)
+	return ranked
+}
+
+func (c Catalog) rankCandidatesContext(ctx context.Context, paths []string, include func(Session) bool) ([]SearchCandidate, error) {
+	byID, unreadable, err := parseSessionsContext(ctx, paths)
+	if err != nil {
+		return nil, err
+	}
 	ranked := make([]SearchCandidate, 0, len(byID)+len(unreadable))
 	for _, session := range byID {
 		if include == nil || include(session) {
@@ -81,7 +98,7 @@ func (c Catalog) rankCandidates(paths []string, include func(Session) bool) []Se
 	for _, item := range unreadable {
 		ranked = append(ranked, SearchCandidate{Path: item.path})
 	}
-	return ranked
+	return ranked, nil
 }
 
 type sessionParseError struct {
@@ -90,9 +107,17 @@ type sessionParseError struct {
 }
 
 func parseSessions(paths []string) (map[string]Session, []sessionParseError) {
+	byID, unreadable, _ := parseSessionsContext(context.Background(), paths)
+	return byID, unreadable
+}
+
+func parseSessionsContext(ctx context.Context, paths []string) (map[string]Session, []sessionParseError, error) {
 	byID := make(map[string]Session)
 	var unreadable []sessionParseError
 	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return nil, unreadable, err
+		}
 		session, err := ParseFile(path)
 		if err != nil {
 			unreadable = append(unreadable, sessionParseError{path: path, err: err})
@@ -103,5 +128,8 @@ func parseSessions(paths []string) (map[string]Session, []sessionParseError) {
 			byID[session.ID] = session
 		}
 	}
-	return byID, unreadable
+	if err := ctx.Err(); err != nil {
+		return nil, unreadable, err
+	}
+	return byID, unreadable, nil
 }

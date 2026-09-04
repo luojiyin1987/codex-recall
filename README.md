@@ -309,3 +309,4 @@ go run ./cmd/cxq search "Promise"
 - Delegate VS Code session display to the Codex extension.
 - Keep discovery, parsing, and search independent from future indexing layers.
 - Prefer a small, cross-platform CLI with minimal dependencies.
+- Treat Ctrl+C as cooperative cancellation for indexing and search work; rollout scans and the optional ripgrep subprocess share the CLI cancellation context.

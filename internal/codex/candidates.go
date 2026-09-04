@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -14,6 +15,8 @@ import (
 type lookPathFunc func(string) (string, error)
 type commandFunc func(string, ...string) ([]byte, error)
 type discoverFilesFunc func(string) ([]string, error)
+type contextCommandFunc func(context.Context, string, ...string) ([]byte, error)
+type contextDiscoverFilesFunc func(context.Context, string) ([]string, error)
 
 // SearchCandidate keeps a path with metadata parsed during candidate ranking.
 type SearchCandidate struct {
@@ -24,6 +27,38 @@ type SearchCandidate struct {
 
 func searchCandidateFiles(home, query string, lookPath lookPathFunc, run commandFunc) ([]string, error) {
 	return searchCandidateFilesWithDiscovery(home, query, lookPath, run, DiscoverFiles)
+}
+
+func searchCandidateFilesContext(ctx context.Context, home, query string) ([]string, error) {
+	return searchCandidateFilesWithContextDependencies(ctx, home, query, exec.LookPath, runCommandContext, DiscoverFilesContext)
+}
+
+func searchCandidateFilesWithContextDependencies(
+	ctx context.Context,
+	home, query string,
+	lookPath lookPathFunc,
+	run contextCommandFunc,
+	discover contextDiscoverFilesFunc,
+) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	rgPath, err := lookPath("rg")
+	roots := existingRolloutRoots(home)
+	if err == nil && len(roots) > 0 {
+		output, runErr := run(ctx, rgPath, ripgrepArgs(roots, query)...)
+		if runErr == nil {
+			return parseRipgrepPaths(output), nil
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) && exitErr.ExitCode() == 1 {
+			return []string{}, nil
+		}
+	}
+	return discover(ctx, home)
 }
 
 func searchCandidateFilesWithDiscovery(home, query string, lookPath lookPathFunc, run commandFunc, discover discoverFilesFunc) ([]string, error) {
@@ -45,6 +80,10 @@ func searchCandidateFilesWithDiscovery(home, query string, lookPath lookPathFunc
 
 func runCommand(name string, args ...string) ([]byte, error) {
 	return exec.Command(name, args...).Output()
+}
+
+func runCommandContext(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).Output()
 }
 
 func existingRolloutRoots(home string) []string {
