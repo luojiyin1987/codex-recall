@@ -150,6 +150,7 @@ func (c cliRunner) runList(args []string) error {
 	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
 	projectFlag := flags.String("project", "", "only sessions whose project exactly matches this value")
 	sourceFlag := flags.String("source", "", "only sessions whose source exactly matches this value")
+	jsonFlag := flags.Bool("json", false, "write machine-readable JSON")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -170,12 +171,25 @@ func (c cliRunner) runList(args []string) error {
 		fmt.Fprintf(c.stderr, "cxq: warning: %v\n", warning)
 	}
 
+	filtered := make([]codex.Session, 0, len(sessions))
+	for _, session := range sessions {
+		if matchesListFilters(session, *projectFlag, *sourceFlag) {
+			filtered = append(filtered, session)
+		}
+	}
+	if *jsonFlag {
+		if err := writeListJSON(c.stdout, filtered); err != nil {
+			return err
+		}
+		if len(warnings) > 0 {
+			fmt.Fprintf(c.stderr, "cxq: skipped %d unreadable session file(s)\n", len(warnings))
+		}
+		return nil
+	}
+
 	writer := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(writer, "DATE\tPROJECT\tSOURCE\tSESSION")
-	for _, session := range sessions {
-		if !matchesListFilters(session, *projectFlag, *sourceFlag) {
-			continue
-		}
+	for _, session := range filtered {
 		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", formatDate(session), session.Project(), session.Source, session.ID)
 	}
 	if err := writer.Flush(); err != nil {
@@ -304,11 +318,12 @@ func (c cliRunner) runCompare(args []string) error {
 	limitFlag := flags.Int("limit", 20, "maximum results requested from each search backend")
 	projectFlag := flags.String("project", "", "only sessions whose project exactly matches this value")
 	sourceFlag := flags.String("source", "", "only sessions whose source exactly matches this value")
+	jsonFlag := flags.Bool("json", false, "write machine-readable JSON")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 1 || strings.TrimSpace(flags.Arg(0)) == "" {
-		return fmt.Errorf("usage: cxq compare [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY")
+		return fmt.Errorf("usage: cxq compare [--json] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY")
 	}
 	if *limitFlag <= 0 {
 		return fmt.Errorf("limit must be greater than zero")
@@ -330,6 +345,15 @@ func (c cliRunner) runCompare(args []string) error {
 	}
 	for _, warning := range result.Warnings {
 		fmt.Fprintf(c.stderr, "cxq: warning: %v\n", warning)
+	}
+	if *jsonFlag {
+		if err := writeCompareJSON(c.stdout, flags.Arg(0), result); err != nil {
+			return err
+		}
+		if len(result.Warnings) > 0 {
+			fmt.Fprintf(c.stderr, "cxq: live search completed with %d warning(s)\n", len(result.Warnings))
+		}
+		return nil
 	}
 
 	writer := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
@@ -761,9 +785,9 @@ func (c cliRunner) printUsage() {
 Usage:
   cxq index [--home PATH] [--db PATH]
   cxq status [--json] [--home PATH] [--db PATH]
-  cxq list [--home PATH] [--project PROJECT] [--source SOURCE]
+  cxq list [--json] [--home PATH] [--project PROJECT] [--source SOURCE]
   cxq search [--json] [--index] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
-  cxq compare [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
+  cxq compare [--json] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
   cxq show [--home PATH] SESSION
   cxq resume [--home PATH] SESSION
   cxq open [--home PATH] [--target TARGET] [--vscode-scheme SCHEME] SESSION
@@ -786,8 +810,10 @@ Examples:
   cxq status
   cxq status --json
   cxq list --project deepseek-harness-remote
+  cxq list --json --project deepseek-harness-remote
   cxq search --project deepseek-harness-remote "WebRTC"
   cxq search --json --project deepseek-harness-remote "WebRTC"
   cxq search --index --json --project deepseek-harness-remote "WebRTC"
-  cxq compare --project deepseek-harness-remote "WebRTC"`)
+  cxq compare --project deepseek-harness-remote "WebRTC"
+  cxq compare --json --project deepseek-harness-remote "WebRTC"`)
 }

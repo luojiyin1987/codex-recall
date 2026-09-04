@@ -39,17 +39,54 @@ type statusJSONOutput struct {
 	DatabaseBytes int64   `json:"database_bytes"`
 }
 
+type listJSONOutput struct {
+	SchemaVersion int              `json:"schema_version"`
+	Results       []listJSONResult `json:"results"`
+}
+
+type listJSONResult struct {
+	SessionID string  `json:"session_id"`
+	Timestamp *string `json:"timestamp"`
+	Project   string  `json:"project"`
+	Source    string  `json:"source"`
+}
+
+type compareJSONOutput struct {
+	SchemaVersion int                `json:"schema_version"`
+	Database      string             `json:"database"`
+	Query         string             `json:"query"`
+	LiveResults   int                `json:"live_results"`
+	IndexResults  int                `json:"index_results"`
+	LiveSessions  int                `json:"live_sessions"`
+	IndexSessions int                `json:"index_sessions"`
+	Overlap       int                `json:"overlap"`
+	LiveOnly      int                `json:"live_only"`
+	IndexOnly     int                `json:"index_only"`
+	Entries       []compareJSONEntry `json:"entries"`
+}
+
+type compareJSONEntry struct {
+	Status    string            `json:"status"`
+	SessionID string            `json:"session_id"`
+	Live      *searchJSONResult `json:"live"`
+	Indexed   *searchJSONResult `json:"indexed"`
+}
+
+func liveSearchJSONResult(match codex.SearchMatch) searchJSONResult {
+	return searchJSONResult{
+		SessionID: match.Session.ID,
+		Timestamp: jsonTimestamp(match.Session.Timestamp),
+		Project:   match.Session.Project(),
+		Source:    match.Session.Source,
+		Role:      match.Role,
+		Snippet:   match.Snippet,
+	}
+}
+
 func writeLiveSearchJSON(w io.Writer, query string, matches []codex.SearchMatch) error {
 	results := make([]searchJSONResult, 0, len(matches))
 	for _, match := range matches {
-		results = append(results, searchJSONResult{
-			SessionID: match.Session.ID,
-			Timestamp: jsonTimestamp(match.Session.Timestamp),
-			Project:   match.Session.Project(),
-			Source:    match.Session.Source,
-			Role:      match.Role,
-			Snippet:   match.Snippet,
-		})
+		results = append(results, liveSearchJSONResult(match))
 	}
 	return writeJSON(w, searchJSONOutput{
 		SchemaVersion: jsonSchemaVersion,
@@ -59,23 +96,27 @@ func writeLiveSearchJSON(w io.Writer, query string, matches []codex.SearchMatch)
 	})
 }
 
+func indexedSearchJSONResult(match index.SearchMatch) searchJSONResult {
+	ordinal := match.Ordinal
+	score := match.Score
+	why := match.Why
+	return searchJSONResult{
+		SessionID: match.Session.ID,
+		Timestamp: jsonTimestamp(match.Session.Timestamp),
+		Project:   match.Session.Project,
+		Source:    match.Session.Source,
+		Role:      match.Role,
+		Snippet:   match.Snippet,
+		Ordinal:   &ordinal,
+		Score:     &score,
+		Why:       &why,
+	}
+}
+
 func writeIndexedSearchJSON(w io.Writer, query string, matches []index.SearchMatch) error {
 	results := make([]searchJSONResult, 0, len(matches))
 	for _, match := range matches {
-		ordinal := match.Ordinal
-		score := match.Score
-		why := match.Why
-		results = append(results, searchJSONResult{
-			SessionID: match.Session.ID,
-			Timestamp: jsonTimestamp(match.Session.Timestamp),
-			Project:   match.Session.Project,
-			Source:    match.Session.Source,
-			Role:      match.Role,
-			Snippet:   match.Snippet,
-			Ordinal:   &ordinal,
-			Score:     &score,
-			Why:       &why,
-		})
+		results = append(results, indexedSearchJSONResult(match))
 	}
 	return writeJSON(w, searchJSONOutput{
 		SchemaVersion: jsonSchemaVersion,
@@ -92,6 +133,54 @@ func writeStatusJSON(w io.Writer, result indexer.StatusResult) error {
 		Sessions:      result.Sessions,
 		LatestSession: jsonTimestamp(result.LatestSession),
 		DatabaseBytes: result.DatabaseBytes,
+	})
+}
+
+func writeListJSON(w io.Writer, sessions []codex.Session) error {
+	results := make([]listJSONResult, 0, len(sessions))
+	for _, session := range sessions {
+		results = append(results, listJSONResult{
+			SessionID: session.ID,
+			Timestamp: jsonTimestamp(session.Timestamp),
+			Project:   session.Project(),
+			Source:    session.Source,
+		})
+	}
+	return writeJSON(w, listJSONOutput{
+		SchemaVersion: jsonSchemaVersion,
+		Results:       results,
+	})
+}
+
+func writeCompareJSON(w io.Writer, query string, result indexer.CompareResult) error {
+	entries := make([]compareJSONEntry, 0, len(result.Entries))
+	for _, entry := range result.Entries {
+		jsonEntry := compareJSONEntry{
+			Status:    entry.Status,
+			SessionID: entry.SessionID,
+		}
+		if entry.Live != nil {
+			live := liveSearchJSONResult(*entry.Live)
+			jsonEntry.Live = &live
+		}
+		if entry.Indexed != nil {
+			indexed := indexedSearchJSONResult(*entry.Indexed)
+			jsonEntry.Indexed = &indexed
+		}
+		entries = append(entries, jsonEntry)
+	}
+	return writeJSON(w, compareJSONOutput{
+		SchemaVersion: jsonSchemaVersion,
+		Database:      result.DatabasePath,
+		Query:         query,
+		LiveResults:   result.LiveResults,
+		IndexResults:  result.IndexResults,
+		LiveSessions:  result.LiveSessions,
+		IndexSessions: result.IndexSessions,
+		Overlap:       result.Overlap,
+		LiveOnly:      result.LiveOnly,
+		IndexOnly:     result.IndexOnly,
+		Entries:       entries,
 	})
 }
 
