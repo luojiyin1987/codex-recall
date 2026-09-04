@@ -136,6 +136,22 @@ With `compare --json`, stdout contains the same summary counts plus structured `
 
 `compare` does not refresh the index. Run `cxq index` again when you want the indexed side to include newer rollout changes. This is intentional: stale-index differences remain visible instead of being hidden by an automatic refresh.
 
+### Context packs
+
+Build a compact, deterministic context pack from the existing indexed search evidence:
+
+```bash
+cxq pack --project codex-recall "sqlite index"
+cxq pack --limit 10 --project codex-recall "sqlite index"
+cxq pack --json --project codex-recall "sqlite index"
+```
+
+`pack` is indexed-only and never refreshes the database implicitly. The default limit is 5 sessions. Each evidence item preserves its session ID, timestamp, project, source, role, message ordinal, normalized snippet, FTS score, retrieval reason, and an exact `cxq resume SESSION` command.
+
+The first version is intentionally deterministic retrieval packaging only. It does not extract decisions or todos, create a memory database, call an LLM, use embeddings, estimate model tokens, or resume Codex automatically. Run `cxq index` explicitly when the derived index needs refreshing.
+
+JSON output uses `schema_version: 1` and exposes the ordered evidence array as `evidence`, making the pack directly consumable by scripts and later Agent/Skill integrations.
+
 Use a custom index database when needed:
 
 ```bash
@@ -144,6 +160,7 @@ cxq status --db /path/to/index.db
 cxq status --json --db /path/to/index.db
 cxq search --index --db /path/to/index.db "WebRTC"
 cxq compare --db /path/to/index.db "WebRTC"
+cxq pack --db /path/to/index.db "WebRTC"
 ```
 
 `cxq search` also accepts `--project` and `--source` as case-insensitive exact-match filters over the displayed `PROJECT` and `SOURCE` values. When both are supplied, both conditions must match. Unlike `list`, `search` always requires exactly one non-blank `QUERY`.

@@ -72,6 +72,28 @@ type compareJSONEntry struct {
 	Indexed   *searchJSONResult `json:"indexed"`
 }
 
+type packJSONOutput struct {
+	SchemaVersion int                `json:"schema_version"`
+	Database      string             `json:"database"`
+	Query         string             `json:"query"`
+	Project       string             `json:"project"`
+	Source        string             `json:"source"`
+	Evidence      []packJSONEvidence `json:"evidence"`
+}
+
+type packJSONEvidence struct {
+	SessionID     string   `json:"session_id"`
+	Timestamp     *string  `json:"timestamp"`
+	Project       string   `json:"project"`
+	Source        string   `json:"source"`
+	Role          string   `json:"role"`
+	Ordinal       int      `json:"ordinal"`
+	Snippet       string   `json:"snippet"`
+	Score         float64  `json:"score"`
+	Why           string   `json:"why"`
+	ResumeCommand string   `json:"resume_command"`
+}
+
 func liveSearchJSONResult(match codex.SearchMatch) searchJSONResult {
 	return searchJSONResult{
 		SessionID: match.Session.ID,
@@ -181,6 +203,32 @@ func writeCompareJSON(w io.Writer, query string, result indexer.CompareResult) e
 		LiveOnly:      result.LiveOnly,
 		IndexOnly:     result.IndexOnly,
 		Entries:       entries,
+	})
+}
+
+func writePackJSON(w io.Writer, result indexer.PackResult) error {
+	evidence := make([]packJSONEvidence, 0, len(result.Evidence))
+	for _, item := range result.Evidence {
+		evidence = append(evidence, packJSONEvidence{
+			SessionID:     item.SessionID,
+			Timestamp:     jsonTimestamp(item.Timestamp),
+			Project:       item.Project,
+			Source:        item.Source,
+			Role:          item.Role,
+			Ordinal:       item.Ordinal,
+			Snippet:       item.Snippet,
+			Score:         item.Score,
+			Why:           item.Why,
+			ResumeCommand: item.ResumeCommand,
+		})
+	}
+	return writeJSON(w, packJSONOutput{
+		SchemaVersion: jsonSchemaVersion,
+		Database:      result.DatabasePath,
+		Query:         result.Query,
+		Project:       result.Project,
+		Source:        result.Source,
+		Evidence:      evidence,
 	})
 }
 
