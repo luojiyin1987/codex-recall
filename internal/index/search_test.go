@@ -196,3 +196,31 @@ func TestSQLiteSearchKeepsBestRankedMessagePerSession(t *testing.T) {
 		t.Fatalf("representative ordinal = %d, want best-ranked ordinal 1: %#v", matches[0].Ordinal, matches[0])
 	}
 }
+
+func TestSQLiteSearchNormalizesSnippetWhitespace(t *testing.T) {
+	idx := openTestIndex(t)
+	ctx := context.Background()
+	session := testSearchSession("whitespace", "/work/demo", "demo", "cli", time.Now().UTC())
+
+	if err := idx.ReplaceSession(ctx, session, []Message{{
+		Ordinal: 0,
+		Role:    "user",
+		Text:    "alpha\n\tneedle\u3000beta",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, err := idx.Search(ctx, SearchOptions{Query: "needle", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("matches = %#v", matches)
+	}
+	if strings.ContainsAny(matches[0].Snippet, "\n\r\t") {
+		t.Fatalf("snippet contains line-breaking whitespace: %q", matches[0].Snippet)
+	}
+	if !strings.Contains(matches[0].Snippet, "alpha needle beta") {
+		t.Fatalf("snippet = %q, want normalized preview", matches[0].Snippet)
+	}
+}

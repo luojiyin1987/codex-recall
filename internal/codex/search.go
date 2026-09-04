@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/luojiyin1987/codex-recall/internal/textutil"
 )
 
 const (
@@ -147,7 +149,7 @@ func searchFile(path string, matcher *regexp.Regexp, session *Session) (SearchMa
 		if text == "" {
 			return false, nil
 		}
-		normalized := normalizePreviewText(text)
+		normalized := textutil.NormalizeWhitespace(text)
 		loc := matcher.FindStringIndex(normalized)
 		if loc == nil {
 			return false, nil
@@ -205,9 +207,6 @@ func conversationText(rec record) (string, string) {
 	}
 }
 
-func normalizePreviewText(text string) string {
-	return strings.Join(strings.Fields(text), " ")
-}
 
 func excerptAroundMatch(text string, matchStart, matchEnd int) string {
 	runes := []rune(text)
