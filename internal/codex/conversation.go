@@ -3,6 +3,8 @@ package codex
 import (
 	"strings"
 	"time"
+
+	"github.com/luojiyin1987/codex-recall/internal/textutil"
 )
 
 // ConversationMessage is a user or assistant message extracted from a rollout.
@@ -29,7 +31,7 @@ func ReadConversation(path string) ([]ConversationMessage, error) {
 		if role == "" || text == "" {
 			return false, nil
 		}
-		normalized := normalizePreviewText(text)
+		normalized := textutil.NormalizeWhitespace(text)
 		duplicateRepresentation := role == lastRole && normalized == lastText && rec.Type != lastRecordType
 		if !duplicateRepresentation {
 			timestamp, _ := parseTimestamp(rec.Timestamp)

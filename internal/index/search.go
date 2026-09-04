@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/luojiyin1987/codex-recall/internal/textutil"
 )
 
 const lexicalWhy = "lexical:fts5"
@@ -92,6 +94,7 @@ ORDER BY bm25(messages_fts) ASC, s.timestamp DESC, CAST(f.ordinal AS INTEGER) AS
 			return nil, fmt.Errorf("parse indexed session timestamp %q: %w", timestamp, err)
 		}
 		match.Session.Timestamp = parsed
+		match.Snippet = textutil.NormalizeWhitespace(match.Snippet)
 		match.Why = lexicalWhy
 		seenSessions[match.Session.ID] = struct{}{}
 		matches = append(matches, match)
