@@ -12,11 +12,29 @@ import (
 
 const sqliteDriverName = "sqlite"
 
+const upsertSessionSQL = `
+INSERT INTO sessions (
+    session_id, timestamp, cwd, project, source, rollout_path, content_hash, indexed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(session_id) DO UPDATE SET
+    timestamp = excluded.timestamp,
+    cwd = excluded.cwd,
+    project = excluded.project,
+    source = excluded.source,
+    rollout_path = excluded.rollout_path,
+    content_hash = excluded.content_hash,
+    indexed_at = excluded.indexed_at
+`
+
 type SQLiteIndex struct {
 	db *sql.DB
 }
 
 var _ Index = (*SQLiteIndex)(nil)
+
+type sqlExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
 
 func OpenSQLite(path string) (*SQLiteIndex, error) {
 	db, err := sql.Open(sqliteDriverName, path)
@@ -71,39 +89,18 @@ func (s *SQLiteIndex) initialize(ctx context.Context) error {
 }
 
 func (s *SQLiteIndex) UpsertSession(ctx context.Context, session Session) error {
-	if session.ID == "" {
-		return errors.New("session id must not be empty")
+	if err := validateSession(session); err != nil {
+		return err
 	}
-	if session.RolloutPath == "" {
-		return errors.New("rollout path must not be empty")
-	}
-	if session.ContentHash == "" {
-		return errors.New("content hash must not be empty")
-	}
-
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO sessions (
-    session_id, timestamp, cwd, project, source, rollout_path, content_hash, indexed_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(session_id) DO UPDATE SET
-    timestamp = excluded.timestamp,
-    cwd = excluded.cwd,
-    project = excluded.project,
-    source = excluded.source,
-    rollout_path = excluded.rollout_path,
-    content_hash = excluded.content_hash,
-    indexed_at = excluded.indexed_at
-`, session.ID, formatTime(session.Timestamp), session.CWD, session.Project, session.Source,
-		session.RolloutPath, session.ContentHash, formatTime(time.Now().UTC()))
-	if err != nil {
+	if err := execUpsertSession(ctx, s.db, session); err != nil {
 		return fmt.Errorf("upsert indexed session %q: %w", session.ID, err)
 	}
 	return nil
 }
 
 func (s *SQLiteIndex) ReplaceMessages(ctx context.Context, sessionID string, messages []Message) error {
-	if sessionID == "" {
-		return errors.New("session id must not be empty")
+	if err := validateMessages(sessionID, messages); err != nil {
+		return err
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -112,6 +109,59 @@ func (s *SQLiteIndex) ReplaceMessages(ctx context.Context, sessionID string, mes
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if err := replaceMessagesTx(ctx, tx, sessionID, messages); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit message replacement: %w", err)
+	}
+	return nil
+}
+
+// ReplaceSession atomically publishes session metadata and its extracted
+// messages. The content hash is therefore never advanced unless the matching
+// message set is committed too.
+func (s *SQLiteIndex) ReplaceSession(ctx context.Context, session Session, messages []Message) error {
+	if err := validateSession(session); err != nil {
+		return err
+	}
+	if err := validateMessages(session.ID, messages); err != nil {
+		return err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin indexed session replacement: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := execUpsertSession(ctx, tx, session); err != nil {
+		return fmt.Errorf("upsert indexed session %q: %w", session.ID, err)
+	}
+	if err := replaceMessagesTx(ctx, tx, session.ID, messages); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit indexed session replacement: %w", err)
+	}
+	return nil
+}
+
+func execUpsertSession(ctx context.Context, execer sqlExecer, session Session) error {
+	_, err := execer.ExecContext(ctx, upsertSessionSQL,
+		session.ID,
+		formatTime(session.Timestamp),
+		session.CWD,
+		session.Project,
+		session.Source,
+		session.RolloutPath,
+		session.ContentHash,
+		formatTime(time.Now().UTC()),
+	)
+	return err
+}
+
+func replaceMessagesTx(ctx context.Context, tx *sql.Tx, sessionID string, messages []Message) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM messages WHERE session_id = ?", sessionID); err != nil {
 		return fmt.Errorf("clear indexed messages for session %q: %w", sessionID, err)
 	}
@@ -126,6 +176,35 @@ VALUES (?, ?, ?, ?, ?)
 	defer stmt.Close()
 
 	for _, message := range messages {
+		var timestamp any
+		if message.Timestamp != nil {
+			timestamp = formatTime(*message.Timestamp)
+		}
+		if _, err := stmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text, timestamp); err != nil {
+			return fmt.Errorf("insert indexed message at ordinal %d: %w", message.Ordinal, err)
+		}
+	}
+	return nil
+}
+
+func validateSession(session Session) error {
+	if session.ID == "" {
+		return errors.New("session id must not be empty")
+	}
+	if session.RolloutPath == "" {
+		return errors.New("rollout path must not be empty")
+	}
+	if session.ContentHash == "" {
+		return errors.New("content hash must not be empty")
+	}
+	return nil
+}
+
+func validateMessages(sessionID string, messages []Message) error {
+	if sessionID == "" {
+		return errors.New("session id must not be empty")
+	}
+	for _, message := range messages {
 		if message.SessionID != "" && message.SessionID != sessionID {
 			return fmt.Errorf("message session id %q does not match replacement session %q", message.SessionID, sessionID)
 		}
@@ -135,18 +214,6 @@ VALUES (?, ?, ?, ?, ?)
 		if message.Role == "" {
 			return fmt.Errorf("message role must not be empty at ordinal %d", message.Ordinal)
 		}
-
-		var timestamp any
-		if message.Timestamp != nil {
-			timestamp = formatTime(*message.Timestamp)
-		}
-		if _, err := stmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text, timestamp); err != nil {
-			return fmt.Errorf("insert indexed message at ordinal %d: %w", message.Ordinal, err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit message replacement: %w", err)
 	}
 	return nil
 }

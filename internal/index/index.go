@@ -30,6 +30,7 @@ type Message struct {
 type Index interface {
 	UpsertSession(ctx context.Context, session Session) error
 	ReplaceMessages(ctx context.Context, sessionID string, messages []Message) error
+	ReplaceSession(ctx context.Context, session Session, messages []Message) error
 	Session(ctx context.Context, id string) (Session, bool, error)
 	Close() error
 }

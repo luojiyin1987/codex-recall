@@ -207,3 +207,88 @@ func assertTableExists(t *testing.T, db *sql.DB, table string) {
 		t.Fatalf("table %q count = %d, want 1", table, count)
 	}
 }
+
+
+func TestSQLiteIndexReplaceSessionCommitsMetadataAndMessagesTogether(t *testing.T) {
+	idx := openTestIndex(t)
+	ctx := context.Background()
+	when := time.Date(2026, 9, 4, 4, 0, 0, 0, time.UTC)
+
+	session := Session{
+		ID:          "session-atomic",
+		Timestamp:   when,
+		CWD:         "/work/demo",
+		Project:     "demo",
+		Source:      "vscode",
+		RolloutPath: "/codex/session-atomic.jsonl",
+		ContentHash: "v1:sha256:first",
+	}
+	if err := idx.ReplaceSession(ctx, session, []Message{
+		{Ordinal: 0, Role: "user", Text: "hello"},
+		{Ordinal: 1, Role: "assistant", Text: "world"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := idx.Session(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || got.ContentHash != session.ContentHash {
+		t.Fatalf("Session() = %#v, found = %v", got, ok)
+	}
+
+	var count int
+	if err := idx.db.QueryRow("SELECT count(*) FROM messages WHERE session_id = ?", session.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("message count = %d, want 2", count)
+	}
+}
+
+func TestSQLiteIndexReplaceSessionRollsBackHashWhenMessageInsertFails(t *testing.T) {
+	idx := openTestIndex(t)
+	ctx := context.Background()
+
+	original := Session{
+		ID:          "session-rollback",
+		Timestamp:   time.Date(2026, 9, 4, 4, 0, 0, 0, time.UTC),
+		RolloutPath: "/codex/session-rollback.jsonl",
+		ContentHash: "v1:sha256:old",
+	}
+	if err := idx.ReplaceSession(ctx, original, []Message{
+		{Ordinal: 0, Role: "user", Text: "keep me"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	updated := original
+	updated.ContentHash = "v1:sha256:new"
+	err := idx.ReplaceSession(ctx, updated, []Message{
+		{Ordinal: 0, Role: "user", Text: "new message"},
+		{Ordinal: 0, Role: "assistant", Text: "duplicate ordinal forces sqlite failure"},
+	})
+	if err == nil {
+		t.Fatal("ReplaceSession() unexpectedly accepted duplicate ordinals")
+	}
+
+	got, ok, readErr := idx.Session(ctx, original.ID)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !ok {
+		t.Fatal("original session disappeared after rollback")
+	}
+	if got.ContentHash != original.ContentHash {
+		t.Fatalf("content hash = %q, want rollback to %q", got.ContentHash, original.ContentHash)
+	}
+
+	var text string
+	if err := idx.db.QueryRow("SELECT text FROM messages WHERE session_id = ? AND ordinal = 0", original.ID).Scan(&text); err != nil {
+		t.Fatal(err)
+	}
+	if text != "keep me" {
+		t.Fatalf("message after rollback = %q, want %q", text, "keep me")
+	}
+}
