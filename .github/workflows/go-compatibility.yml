@@ -28,7 +28,7 @@ jobs:
             runner: ubuntu-latest
             toolchain: 1.23.x
             directive: "1.23"
-            required: false
+            required: true
           - target: linux-x64
             runner: ubuntu-latest
             toolchain: 1.24.x
@@ -43,7 +43,7 @@ jobs:
             runner: macos-15-intel
             toolchain: 1.23.x
             directive: "1.23"
-            required: false
+            required: true
           - target: macos-x64
             runner: macos-15-intel
             toolchain: 1.24.x
@@ -58,7 +58,7 @@ jobs:
             runner: macos-latest
             toolchain: 1.23.x
             directive: "1.23"
-            required: false
+            required: true
           - target: macos-arm64
             runner: macos-latest
             toolchain: 1.24.x
