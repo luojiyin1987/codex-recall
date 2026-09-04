@@ -424,3 +424,61 @@ func testEnvValue(env []string, key string) string {
 	}
 	return ""
 }
+
+
+func TestCLIRunnerIndexRefreshesDerivedSQLite(t *testing.T) {
+	home := t.TempDir()
+	sessionID := "019abc11-1234-7abc-8def-0123456789ab"
+	path := filepath.Join(home, "sessions", "2026", "09", "04", "rollout-2026-09-04T04-00-00-"+sessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Join([]string{
+		`{"timestamp":"2026-09-04T04:00:00Z","type":"session_meta","payload":{"id":"` + sessionID + `","timestamp":"2026-09-04T04:00:00Z","cwd":"/tmp/project","source":"vscode"}}`,
+		`{"timestamp":"2026-09-04T04:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"indexed message"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	if err := runner.run([]string{"index", "--home", home}); err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(home, ".codex-recall", "index.db")
+	if _, err := os.Stat(indexPath); err != nil {
+		t.Fatalf("index database was not created: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "INDEXED") || !strings.Contains(stdout.String(), "1") || stderr.Len() != 0 {
+		t.Fatalf("first index stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := runner.run([]string{"index", "--home", home}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "SKIPPED") || !strings.Contains(stdout.String(), "1") || stderr.Len() != 0 {
+		t.Fatalf("second index stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+}
+
+func TestCLIRunnerIndexSupportsCustomDatabasePath(t *testing.T) {
+	home := t.TempDir()
+	custom := filepath.Join(t.TempDir(), "nested", "custom.db")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	if err := runner.run([]string{"index", "--home", home, "--db", custom}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(custom); err != nil {
+		t.Fatalf("custom index database was not created: %v", err)
+	}
+	if !strings.Contains(stdout.String(), custom) || stderr.Len() != 0 {
+		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+}

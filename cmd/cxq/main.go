@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/luojiyin1987/codex-recall/internal/codex"
+	"github.com/luojiyin1987/codex-recall/internal/indexer"
 )
 
 func main() {
@@ -43,6 +45,8 @@ func (c cliRunner) run(args []string) error {
 	}
 
 	switch args[0] {
+	case "index":
+		return c.runIndex(args[1:])
 	case "list":
 		return c.runList(args[1:])
 	case "search":
@@ -61,6 +65,44 @@ func (c cliRunner) run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func (c cliRunner) runIndex(args []string) error {
+	flags := flag.NewFlagSet("index", flag.ContinueOnError)
+	flags.SetOutput(c.stderr)
+	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
+	dbFlag := flags.String("db", "", "SQLite index path (default: CODEX_HOME/.codex-recall/index.db)")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("index does not accept positional arguments; usage: cxq index [--home PATH] [--db PATH]")
+	}
+
+	home, err := resolveHome(*homeFlag)
+	if err != nil {
+		return err
+	}
+	result, err := indexer.Refresh(context.Background(), home, indexer.RefreshOptions{DatabasePath: *dbFlag})
+	if err != nil {
+		return err
+	}
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(c.stderr, "cxq: warning: %v\n", warning)
+	}
+
+	writer := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintf(writer, "DATABASE\t%s\n", result.DatabasePath)
+	fmt.Fprintf(writer, "DISCOVERED\t%d\n", result.Discovered)
+	fmt.Fprintf(writer, "INDEXED\t%d\n", result.Indexed)
+	fmt.Fprintf(writer, "SKIPPED\t%d\n", result.Skipped)
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+	if len(result.Warnings) > 0 {
+		fmt.Fprintf(c.stderr, "cxq: index refresh completed with %d warning(s)\n", len(result.Warnings))
+	}
+	return nil
 }
 
 func (c cliRunner) runList(args []string) error {
@@ -565,6 +607,7 @@ func (c cliRunner) printUsage() {
 	fmt.Fprintln(c.stderr, `codex-recall (cxq)
 
 Usage:
+  cxq index [--home PATH] [--db PATH]
   cxq list [--home PATH] [--project PROJECT] [--source SOURCE]
   cxq search [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
   cxq show [--home PATH] SESSION
@@ -573,6 +616,7 @@ Usage:
   cxq version
 
 Commands:
+  index   Build or refresh the local derived SQLite index
   list    Discover and list local Codex sessions, optionally filtered
   search  Search user and assistant conversation text
   show    Show user and assistant messages from a session
@@ -582,6 +626,7 @@ Commands:
   help    Show this help
 
 Examples:
+  cxq index
   cxq list --project deepseek-harness-remote
   cxq search --project deepseek-harness-remote "WebRTC"`)
 }
