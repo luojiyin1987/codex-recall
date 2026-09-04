@@ -25,6 +25,22 @@ type Message struct {
 	Timestamp *time.Time
 }
 
+type SearchOptions struct {
+	Query   string
+	Limit   int
+	Project string
+	Source  string
+}
+
+type SearchMatch struct {
+	Session Session
+	Ordinal int
+	Role    string
+	Snippet string
+	Score   float64
+	Why     string
+}
+
 // Index stores disposable, derived data built from Codex rollout files.
 // Codex rollout files remain the source of truth.
 type Index interface {
@@ -32,5 +48,6 @@ type Index interface {
 	ReplaceMessages(ctx context.Context, sessionID string, messages []Message) error
 	ReplaceSession(ctx context.Context, session Session, messages []Message) error
 	Session(ctx context.Context, id string) (Session, bool, error)
+	Search(ctx context.Context, options SearchOptions) ([]SearchMatch, error)
 	Close() error
 }
