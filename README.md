@@ -262,7 +262,7 @@ Benchmarks are opt-in and are not run by the normal test suite. Run them explici
 go test ./internal/index ./internal/indexer ./internal/codex -run '^$' -bench . -benchmem
 ```
 
-The benchmark datasets cover 100, 1,000, and 10,000 sessions. Index benchmarks report `db-bytes` alongside Go's standard `ns/op`, `B/op`, and `allocs/op` metrics. The live-search benchmark disables the optional `rg` fast path so results measure the same built-in scanner on every machine.
+The benchmark datasets cover 100, 1,000, and 10,000 sessions. Index refreshes write changed sessions in bounded batches so large initial builds avoid one SQLite commit per session. Index benchmarks report `db-bytes` alongside Go's standard `ns/op`, `B/op`, and `allocs/op` metrics. The live-search benchmark disables the optional `rg` fast path so results measure the same built-in scanner on every machine.
 
 ## Build
 

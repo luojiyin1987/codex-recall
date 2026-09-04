@@ -129,27 +129,93 @@ func (s *SQLiteIndex) ReplaceMessages(ctx context.Context, sessionID string, mes
 // messages. The content hash is therefore never advanced unless the matching
 // message set and lexical index are committed too.
 func (s *SQLiteIndex) ReplaceSession(ctx context.Context, session Session, messages []Message) error {
-	if err := validateSession(session); err != nil {
-		return err
+	return s.ReplaceSessions(ctx, []SessionReplacement{{
+		Session:  session,
+		Messages: messages,
+	}})
+}
+
+// ReplaceSessions publishes a bounded batch in one transaction. Statements are
+// prepared once per batch so large refreshes avoid one commit and repeated
+// prepares for every individual session.
+func (s *SQLiteIndex) ReplaceSessions(ctx context.Context, replacements []SessionReplacement) error {
+	if len(replacements) == 0 {
+		return nil
 	}
-	if err := validateMessages(session.ID, messages); err != nil {
-		return err
+	for _, replacement := range replacements {
+		if err := validateSession(replacement.Session); err != nil {
+			return err
+		}
+		if err := validateMessages(replacement.Session.ID, replacement.Messages); err != nil {
+			return err
+		}
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin indexed session replacement: %w", err)
+		return fmt.Errorf("begin indexed session batch replacement: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := execUpsertSession(ctx, tx, session); err != nil {
-		return fmt.Errorf("upsert indexed session %q: %w", session.ID, err)
+	upsertStmt, err := tx.PrepareContext(ctx, upsertSessionSQL)
+	if err != nil {
+		return fmt.Errorf("prepare indexed session upsert: %w", err)
 	}
-	if err := replaceMessagesTx(ctx, tx, session.ID, messages); err != nil {
-		return err
+	defer upsertStmt.Close()
+
+	deleteFTSStmt, err := tx.PrepareContext(ctx, "DELETE FROM messages_fts WHERE session_id = ?")
+	if err != nil {
+		return fmt.Errorf("prepare lexical message delete: %w", err)
 	}
+	defer deleteFTSStmt.Close()
+
+	deleteMessageStmt, err := tx.PrepareContext(ctx, "DELETE FROM messages WHERE session_id = ?")
+	if err != nil {
+		return fmt.Errorf("prepare indexed message delete: %w", err)
+	}
+	defer deleteMessageStmt.Close()
+
+	messageStmt, err := tx.PrepareContext(ctx, `
+INSERT INTO messages (session_id, ordinal, role, text, timestamp)
+VALUES (?, ?, ?, ?, ?)
+`)
+	if err != nil {
+		return fmt.Errorf("prepare indexed message insert: %w", err)
+	}
+	defer messageStmt.Close()
+
+	ftsStmt, err := tx.PrepareContext(ctx, `
+INSERT INTO messages_fts (session_id, ordinal, role, text)
+VALUES (?, ?, ?, ?)
+`)
+	if err != nil {
+		return fmt.Errorf("prepare lexical message insert: %w", err)
+	}
+	defer ftsStmt.Close()
+
+	for _, replacement := range replacements {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		session := replacement.Session
+		if err := execPreparedUpsertSession(ctx, upsertStmt, session); err != nil {
+			return fmt.Errorf("upsert indexed session %q: %w", session.ID, err)
+		}
+		if err := replaceMessagesPrepared(
+			ctx,
+			deleteFTSStmt,
+			deleteMessageStmt,
+			messageStmt,
+			ftsStmt,
+			session.ID,
+			replacement.Messages,
+		); err != nil {
+			return err
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit indexed session replacement: %w", err)
+		return fmt.Errorf("commit indexed session batch replacement: %w", err)
 	}
 	return nil
 }
@@ -166,6 +232,54 @@ func execUpsertSession(ctx context.Context, execer sqlExecer, session Session) e
 		formatTime(time.Now().UTC()),
 	)
 	return err
+}
+
+func execPreparedUpsertSession(ctx context.Context, stmt *sql.Stmt, session Session) error {
+	_, err := stmt.ExecContext(ctx,
+		session.ID,
+		formatTime(session.Timestamp),
+		session.CWD,
+		session.Project,
+		session.Source,
+		session.RolloutPath,
+		session.ContentHash,
+		formatTime(time.Now().UTC()),
+	)
+	return err
+}
+
+func replaceMessagesPrepared(
+	ctx context.Context,
+	deleteFTSStmt *sql.Stmt,
+	deleteMessageStmt *sql.Stmt,
+	messageStmt *sql.Stmt,
+	ftsStmt *sql.Stmt,
+	sessionID string,
+	messages []Message,
+) error {
+	if _, err := deleteFTSStmt.ExecContext(ctx, sessionID); err != nil {
+		return fmt.Errorf("clear lexical messages for session %q: %w", sessionID, err)
+	}
+	if _, err := deleteMessageStmt.ExecContext(ctx, sessionID); err != nil {
+		return fmt.Errorf("clear indexed messages for session %q: %w", sessionID, err)
+	}
+
+	for _, message := range messages {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var timestamp any
+		if message.Timestamp != nil {
+			timestamp = formatTime(*message.Timestamp)
+		}
+		if _, err := messageStmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text, timestamp); err != nil {
+			return fmt.Errorf("insert indexed message at ordinal %d for session %q: %w", message.Ordinal, sessionID, err)
+		}
+		if _, err := ftsStmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text); err != nil {
+			return fmt.Errorf("insert lexical message at ordinal %d for session %q: %w", message.Ordinal, sessionID, err)
+		}
+	}
+	return nil
 }
 
 func replaceMessagesTx(ctx context.Context, tx *sql.Tx, sessionID string, messages []Message) error {

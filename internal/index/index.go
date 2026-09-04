@@ -25,6 +25,12 @@ type Message struct {
 	Timestamp *time.Time
 }
 
+// SessionReplacement is one atomic session metadata + message replacement.
+type SessionReplacement struct {
+	Session  Session
+	Messages []Message
+}
+
 type SearchOptions struct {
 	Query   string
 	Limit   int
@@ -47,6 +53,7 @@ type Index interface {
 	UpsertSession(ctx context.Context, session Session) error
 	ReplaceMessages(ctx context.Context, sessionID string, messages []Message) error
 	ReplaceSession(ctx context.Context, session Session, messages []Message) error
+	ReplaceSessions(ctx context.Context, replacements []SessionReplacement) error
 	Session(ctx context.Context, id string) (Session, bool, error)
 	Sessions(ctx context.Context) ([]Session, error)
 	DeleteSession(ctx context.Context, id string) error
