@@ -77,11 +77,18 @@ func (s *SQLiteIndex) initialize(ctx context.Context) error {
 			return fmt.Errorf("initialize sqlite schema: %w", err)
 		}
 	}
-	if currentVersion < schemaVersion {
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
-			return fmt.Errorf("set sqlite schema version: %w", err)
+
+	for version := currentVersion + 1; version <= schemaVersion; version++ {
+		for _, statement := range schemaMigrations[version] {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migrate sqlite schema to version %d: %w", version, err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
+			return fmt.Errorf("set sqlite schema version %d: %w", version, err)
 		}
 	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit sqlite schema initialization: %w", err)
 	}
@@ -120,7 +127,7 @@ func (s *SQLiteIndex) ReplaceMessages(ctx context.Context, sessionID string, mes
 
 // ReplaceSession atomically publishes session metadata and its extracted
 // messages. The content hash is therefore never advanced unless the matching
-// message set is committed too.
+// message set and lexical index are committed too.
 func (s *SQLiteIndex) ReplaceSession(ctx context.Context, session Session, messages []Message) error {
 	if err := validateSession(session); err != nil {
 		return err
@@ -162,26 +169,41 @@ func execUpsertSession(ctx context.Context, execer sqlExecer, session Session) e
 }
 
 func replaceMessagesTx(ctx context.Context, tx *sql.Tx, sessionID string, messages []Message) error {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM messages_fts WHERE session_id = ?", sessionID); err != nil {
+		return fmt.Errorf("clear lexical messages for session %q: %w", sessionID, err)
+	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM messages WHERE session_id = ?", sessionID); err != nil {
 		return fmt.Errorf("clear indexed messages for session %q: %w", sessionID, err)
 	}
 
-	stmt, err := tx.PrepareContext(ctx, `
+	messageStmt, err := tx.PrepareContext(ctx, `
 INSERT INTO messages (session_id, ordinal, role, text, timestamp)
 VALUES (?, ?, ?, ?, ?)
 `)
 	if err != nil {
 		return fmt.Errorf("prepare indexed message insert: %w", err)
 	}
-	defer stmt.Close()
+	defer messageStmt.Close()
+
+	ftsStmt, err := tx.PrepareContext(ctx, `
+INSERT INTO messages_fts (session_id, ordinal, role, text)
+VALUES (?, ?, ?, ?)
+`)
+	if err != nil {
+		return fmt.Errorf("prepare lexical message insert: %w", err)
+	}
+	defer ftsStmt.Close()
 
 	for _, message := range messages {
 		var timestamp any
 		if message.Timestamp != nil {
 			timestamp = formatTime(*message.Timestamp)
 		}
-		if _, err := stmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text, timestamp); err != nil {
+		if _, err := messageStmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text, timestamp); err != nil {
 			return fmt.Errorf("insert indexed message at ordinal %d: %w", message.Ordinal, err)
+		}
+		if _, err := ftsStmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text); err != nil {
+			return fmt.Errorf("insert lexical message at ordinal %d: %w", message.Ordinal, err)
 		}
 	}
 	return nil
