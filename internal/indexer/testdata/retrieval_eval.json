@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "limit": 5,
+  "minimum_live_hit_at_5": 17,
+  "minimum_index_hit_at_5": 14,
+  "sessions": [
+    {
+      "id": "eval-batch",
+      "timestamp": "2026-09-04T08:00:00Z",
+      "project": "codex-recall",
+      "source": "vscode",
+      "user": "The first build became fast after batch sqlite writes reduced transaction overhead.",
+      "assistant": "Keep the write batch bounded and deterministic."
+    },
+    {
+      "id": "eval-chinese-exact",
+      "timestamp": "2026-09-04T08:01:00Z",
+      "project": "codex-recall",
+      "source": "vscode",
+      "user": "事务批处理",
+      "assistant": "记录精确中文 token 的检索行为。"
+    },
+    {
+      "id": "eval-chinese-substring",
+      "timestamp": "2026-09-04T08:02:00Z",
+      "project": "codex-recall",
+      "source": "vscode",
+      "user": "我们使用批量事务写入索引，减少首次构建时间。",
+      "assistant": "这个查询用于观察连续中文文本中的子串检索。"
+    },
+    {
+      "id": "eval-camel-full",
+      "timestamp": "2026-09-04T08:03:00Z",
+      "project": "agent-core",
+      "source": "vscode",
+      "user": "refreshState remains stable after callback registration.",
+      "assistant": "The full camelCase identifier should be recoverable."
+    },
+    {
+      "id": "eval-camel-prefix",
+      "timestamp": "2026-09-04T08:04:00Z",
+      "project": "agent-core",
+      "source": "vscode",
+      "user": "callbackInfo is analyzed once during registration.",
+      "assistant": "Prefix lookup is common when the exact identifier is forgotten."
+    },
+    {
+      "id": "eval-snake",
+      "timestamp": "2026-09-04T08:05:00Z",
+      "project": "agent-core",
+      "source": "vscode",
+      "user": "session_cache_key is reused across the callback chain.",
+      "assistant": "Preserve the exact snake_case identifier."
+    },
+    {
+      "id": "eval-path",
+      "timestamp": "2026-09-04T08:06:00Z",
+      "project": "codex-recall",
+      "source": "vscode",
+      "user": "Inspect internal/index/sqlite.go before changing FTS behavior.",
+      "assistant": "File paths are frequent retrieval keys."
+    },
+    {
+      "id": "eval-error",
+      "timestamp": "2026-09-04T08:07:00Z",
+      "project": "codex-recall",
+      "source": "cli",
+      "user": "macOS ARM64 failed with dyld: missing LC_UUID load command.",
+      "assistant": "The exact runtime error identified the Go toolchain boundary."
+    },
+    {
+      "id": "eval-uuid",
+      "timestamp": "2026-09-04T08:08:00Z",
+      "project": "codex-recall",
+      "source": "vscode",
+      "user": "Resume session 019fe0cb-9760-78b1-b545-b5e90d1dd0d7 after checking the index.",
+      "assistant": "Session IDs are direct provenance."
+    },
+    {
+      "id": "eval-sha",
+      "timestamp": "2026-09-04T08:09:00Z",
+      "project": "codex-recall",
+      "source": "vscode",
+      "user": "The relevant commit is 49bcc7e8ab386d700cb8ccfa5a5b72d97528898f.",
+      "assistant": "Commit hashes are common lookup keys."
+    },
+    {
+      "id": "eval-method",
+      "timestamp": "2026-09-04T08:10:00Z",
+      "project": "deepseek-harness-remote",
+      "source": "vscode",
+      "user": "transport.send() can hang while the RPC termination path is closing.",
+      "assistant": "Keep the method call punctuation in the query corpus."
+    },
+    {
+      "id": "eval-hyphen",
+      "timestamp": "2026-09-04T08:11:00Z",
+      "project": "codex-recall",
+      "source": "vscode",
+      "user": "The foo-bar token demonstrates punctuation segmentation differences.",
+      "assistant": "Live literal matching and FTS tokenization can diverge."
+    },
+    {
+      "id": "eval-threads",
+      "timestamp": "2026-09-04T08:12:00Z",
+      "project": "lint-md",
+      "source": "vscode",
+      "user": "The CLI used --threads auto before the bounded worker default was discussed.",
+      "assistant": "Flags and values should be searchable together."
+    },
+    {
+      "id": "eval-worker-target",
+      "timestamp": "2026-09-04T08:13:00Z",
+      "project": "lint-md",
+      "source": "vscode",
+      "user": "worker memory amplification",
+      "assistant": "The concise session is the most focused evidence for this topic."
+    },
+    {
+      "id": "eval-worker-distractor",
+      "timestamp": "2026-09-04T08:14:00Z",
+      "project": "lint-md",
+      "source": "vscode",
+      "user": "This long unrelated planning note briefly mentions worker memory amplification while discussing release notes, parser cleanup, CI naming, documentation formatting, and several other maintenance topics.",
+      "assistant": "This is intentionally less focused evidence."
+    }
+  ],
+  "queries": [
+    {"name": "natural phrase", "category": "natural-language", "query": "batch sqlite writes", "relevant_session_id": "eval-batch"},
+    {"name": "Chinese exact token", "category": "chinese", "query": "事务批处理", "relevant_session_id": "eval-chinese-exact"},
+    {"name": "Chinese continuous substring", "category": "chinese-substring", "query": "批量事务", "relevant_session_id": "eval-chinese-substring"},
+    {"name": "camelCase full identifier", "category": "code-identifier", "query": "refreshState", "relevant_session_id": "eval-camel-full"},
+    {"name": "camelCase prefix", "category": "code-prefix", "query": "callback", "relevant_session_id": "eval-camel-prefix"},
+    {"name": "snake_case identifier", "category": "code-identifier", "query": "session_cache_key", "relevant_session_id": "eval-snake"},
+    {"name": "file path", "category": "path", "query": "internal/index/sqlite.go", "relevant_session_id": "eval-path"},
+    {"name": "punctuated runtime error", "category": "error", "query": "missing LC_UUID load command", "relevant_session_id": "eval-error"},
+    {"name": "full session UUID", "category": "uuid", "query": "019fe0cb-9760-78b1-b545-b5e90d1dd0d7", "relevant_session_id": "eval-uuid"},
+    {"name": "session UUID prefix", "category": "uuid-prefix", "query": "019fe0", "relevant_session_id": "eval-uuid"},
+    {"name": "full commit SHA", "category": "sha", "query": "49bcc7e8ab386d700cb8ccfa5a5b72d97528898f", "relevant_session_id": "eval-sha"},
+    {"name": "commit SHA prefix", "category": "sha-prefix", "query": "49bcc7e8", "relevant_session_id": "eval-sha"},
+    {"name": "method call", "category": "code-punctuation", "query": "transport.send()", "relevant_session_id": "eval-method"},
+    {"name": "hyphenated exact token", "category": "punctuation", "query": "foo-bar", "relevant_session_id": "eval-hyphen"},
+    {"name": "punctuation-normalized phrase", "category": "punctuation", "query": "foo bar", "relevant_session_id": "eval-hyphen"},
+    {"name": "CLI flag and value", "category": "command", "query": "--threads auto", "relevant_session_id": "eval-threads"},
+    {"name": "focused ranking evidence", "category": "ranking", "query": "worker memory amplification", "relevant_session_id": "eval-worker-target"},
+    {"name": "natural error phrase", "category": "error", "query": "runtime error identified the Go toolchain boundary", "relevant_session_id": "eval-error"}
+  ]
+}

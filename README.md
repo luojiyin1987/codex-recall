@@ -295,6 +295,20 @@ Verify the installation:
 rg --version
 ```
 
+## Retrieval evaluation
+
+The repository includes an anonymized retrieval evaluation corpus based on recurring real-world query shapes from Codex work: natural-language phrases, Chinese text, camelCase and snake_case identifiers, file paths, runtime errors, UUID/SHA lookups, method calls, CLI flags, punctuation, and a focused-vs-noisy ranking case.
+
+Run it with:
+
+```bash
+go test ./internal/indexer -run TestRetrievalEvaluationCorpus -v
+```
+
+The evaluation builds a real derived SQLite/FTS5 index, runs both the built-in live scanner and indexed search at Hit@5, and logs per-query rank plus aggregate MRR. The corpus stores relevance ground truth and baseline floors rather than hard-coding known backend misses, so retrieval improvements can raise the score without rewriting expected results. A change only fails the test when a backend drops below the recorded baseline.
+
+The fixture is synthetic and anonymized; it captures realistic query shapes without committing private Codex conversation history.
+
 ## Benchmarks
 
 Benchmarks are opt-in and are not run by the normal test suite. Run them explicitly with:
