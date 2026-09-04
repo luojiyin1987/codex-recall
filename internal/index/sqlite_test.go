@@ -364,3 +364,80 @@ func TestSQLiteIndexDeleteSessionRemovesRelationalAndLexicalData(t *testing.T) {
 		t.Fatalf("deleted session remained searchable: %#v", matches)
 	}
 }
+
+func TestSQLiteIndexReplaceSessionsRollsBackWholeBatchOnWriteFailure(t *testing.T) {
+	idx := openTestIndex(t)
+	ctx := context.Background()
+
+	first := Session{
+		ID:          "batch-first",
+		Timestamp:   time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC),
+		RolloutPath: "/codex/batch-first.jsonl",
+		ContentHash: "v1:sha256:first-old",
+	}
+	second := Session{
+		ID:          "batch-second",
+		Timestamp:   time.Date(2026, 9, 4, 10, 0, 1, 0, time.UTC),
+		RolloutPath: "/codex/batch-second.jsonl",
+		ContentHash: "v1:sha256:second-old",
+	}
+	if err := idx.ReplaceSession(ctx, first, []Message{{Ordinal: 0, Role: "user", Text: "first old"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.ReplaceSession(ctx, second, []Message{{Ordinal: 0, Role: "user", Text: "second old"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	firstUpdated := first
+	firstUpdated.ContentHash = "v1:sha256:first-new"
+	secondUpdated := second
+	secondUpdated.ContentHash = "v1:sha256:second-new"
+
+	err := idx.ReplaceSessions(ctx, []SessionReplacement{
+		{
+			Session:  firstUpdated,
+			Messages: []Message{{Ordinal: 0, Role: "assistant", Text: "first new"}},
+		},
+		{
+			Session: secondUpdated,
+			Messages: []Message{
+				{Ordinal: 0, Role: "user", Text: "duplicate one"},
+				{Ordinal: 0, Role: "assistant", Text: "duplicate two"},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("ReplaceSessions() unexpectedly accepted failing batch")
+	}
+
+	gotFirst, ok, readErr := idx.Session(ctx, first.ID)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !ok || gotFirst.ContentHash != first.ContentHash {
+		t.Fatalf("first session after rollback = %#v, found = %v", gotFirst, ok)
+	}
+	gotSecond, ok, readErr := idx.Session(ctx, second.ID)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !ok || gotSecond.ContentHash != second.ContentHash {
+		t.Fatalf("second session after rollback = %#v, found = %v", gotSecond, ok)
+	}
+
+	for _, tc := range []struct {
+		id   string
+		want string
+	}{
+		{id: first.ID, want: "first old"},
+		{id: second.ID, want: "second old"},
+	} {
+		var text string
+		if err := idx.db.QueryRow("SELECT text FROM messages WHERE session_id = ? AND ordinal = 0", tc.id).Scan(&text); err != nil {
+			t.Fatal(err)
+		}
+		if text != tc.want {
+			t.Fatalf("message for %s after rollback = %q, want %q", tc.id, text, tc.want)
+		}
+	}
+}

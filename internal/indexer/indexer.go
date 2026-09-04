@@ -12,12 +12,14 @@ import (
 	"github.com/luojiyin1987/codex-recall/internal/index"
 )
 
-const contentHashVersion = "v1"
+const (
+	contentHashVersion = "v1"
+	indexWriteBatchSize = 256
+)
 
 type Store interface {
-	Session(ctx context.Context, id string) (index.Session, bool, error)
 	Sessions(ctx context.Context) ([]index.Session, error)
-	ReplaceSession(ctx context.Context, session index.Session, messages []index.Message) error
+	ReplaceSessions(ctx context.Context, replacements []index.SessionReplacement) error
 	DeleteSession(ctx context.Context, id string) error
 }
 
@@ -46,6 +48,31 @@ func Build(ctx context.Context, home string, store Store) (Result, error) {
 		currentSessionIDs[session.ID] = struct{}{}
 	}
 
+	indexedSessions, err := store.Sessions(ctx)
+	if err != nil {
+		return result, fmt.Errorf("list indexed sessions: %w", err)
+	}
+	indexedByID := make(map[string]index.Session, len(indexedSessions))
+	for _, session := range indexedSessions {
+		indexedByID[session.ID] = session
+	}
+
+	pending := make([]index.SessionReplacement, 0, indexWriteBatchSize)
+	flushPending := func() error {
+		if len(pending) == 0 {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := store.ReplaceSessions(ctx, pending); err != nil {
+			return err
+		}
+		result.Indexed += len(pending)
+		pending = pending[:0]
+		return nil
+	}
+
 	for _, session := range sessions {
 		if err := ctx.Err(); err != nil {
 			return result, err
@@ -57,10 +84,7 @@ func Build(ctx context.Context, home string, store Store) (Result, error) {
 			continue
 		}
 
-		current, found, err := store.Session(ctx, session.ID)
-		if err != nil {
-			return result, fmt.Errorf("read indexed session %q: %w", session.ID, err)
-		}
+		current, found := indexedByID[session.ID]
 		if found && current.ContentHash == contentHash && current.RolloutPath == session.Path {
 			result.Skipped++
 			continue
@@ -96,17 +120,21 @@ func Build(ctx context.Context, home string, store Store) (Result, error) {
 			RolloutPath: session.Path,
 			ContentHash: contentHash,
 		}
-		if err := store.ReplaceSession(ctx, indexedSession, indexedMessages); err != nil {
-			return result, fmt.Errorf("replace indexed session %q: %w", session.ID, err)
+		pending = append(pending, index.SessionReplacement{
+			Session:  indexedSession,
+			Messages: indexedMessages,
+		})
+		if len(pending) == indexWriteBatchSize {
+			if err := flushPending(); err != nil {
+				return result, fmt.Errorf("replace indexed session batch: %w", err)
+			}
 		}
-		result.Indexed++
+	}
+	if err := flushPending(); err != nil {
+		return result, fmt.Errorf("replace indexed session batch: %w", err)
 	}
 
 	if len(warnings) == 0 {
-		indexedSessions, err := store.Sessions(ctx)
-		if err != nil {
-			return result, fmt.Errorf("list indexed sessions for reconciliation: %w", err)
-		}
 		for _, indexedSession := range indexedSessions {
 			if err := ctx.Err(); err != nil {
 				return result, err

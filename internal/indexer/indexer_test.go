@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,8 @@ type fakeStore struct {
 	sessions     map[string]index.Session
 	messages     map[string][]index.Message
 	replacements int
+	batchCalls   int
+	batchSizes   []int
 	deletions    int
 	listCalls    int
 }
@@ -23,11 +26,6 @@ func newFakeStore() *fakeStore {
 		sessions: make(map[string]index.Session),
 		messages: make(map[string][]index.Message),
 	}
-}
-
-func (f *fakeStore) Session(_ context.Context, id string) (index.Session, bool, error) {
-	session, ok := f.sessions[id]
-	return session, ok, nil
 }
 
 func (f *fakeStore) Sessions(_ context.Context) ([]index.Session, error) {
@@ -46,10 +44,15 @@ func (f *fakeStore) DeleteSession(_ context.Context, id string) error {
 	return nil
 }
 
-func (f *fakeStore) ReplaceSession(_ context.Context, session index.Session, messages []index.Message) error {
-	f.sessions[session.ID] = session
-	f.messages[session.ID] = append([]index.Message(nil), messages...)
-	f.replacements++
+func (f *fakeStore) ReplaceSessions(_ context.Context, replacements []index.SessionReplacement) error {
+	f.batchCalls++
+	f.batchSizes = append(f.batchSizes, len(replacements))
+	for _, replacement := range replacements {
+		session := replacement.Session
+		f.sessions[session.ID] = session
+		f.messages[session.ID] = append([]index.Message(nil), replacement.Messages...)
+		f.replacements++
+	}
 	return nil
 }
 
@@ -296,10 +299,36 @@ func TestBuildSkipsStaleDeletionWhenCatalogHasWarnings(t *testing.T) {
 	if result.Deleted != 0 || store.deletions != 0 {
 		t.Fatalf("stale deletion ran despite catalog warning: %#v", result)
 	}
-	if store.listCalls != 0 {
-		t.Fatalf("Sessions() called %d time(s), want 0 when catalog has warnings", store.listCalls)
+	if store.listCalls != 1 {
+		t.Fatalf("Sessions() called %d time(s), want 1 preload", store.listCalls)
 	}
 	if _, ok := store.sessions["possibly-stale"]; !ok {
 		t.Fatal("possibly stale session was deleted despite catalog warning")
+	}
+}
+
+func TestBuildWritesSessionsInBoundedBatches(t *testing.T) {
+	home := t.TempDir()
+	for i := 0; i < indexWriteBatchSize+1; i++ {
+		id := fmt.Sprintf("session-%03d", i)
+		writeRollout(t, home, id, "hello", "world")
+	}
+	store := newFakeStore()
+
+	result, err := Build(context.Background(), home, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Indexed != indexWriteBatchSize+1 {
+		t.Fatalf("Indexed = %d, want %d", result.Indexed, indexWriteBatchSize+1)
+	}
+	if store.batchCalls != 2 {
+		t.Fatalf("batchCalls = %d, want 2", store.batchCalls)
+	}
+	if len(store.batchSizes) != 2 || store.batchSizes[0] != indexWriteBatchSize || store.batchSizes[1] != 1 {
+		t.Fatalf("batchSizes = %#v, want [%d 1]", store.batchSizes, indexWriteBatchSize)
+	}
+	if store.listCalls != 1 {
+		t.Fatalf("listCalls = %d, want 1", store.listCalls)
 	}
 }
