@@ -1,0 +1,5 @@
+/cxq
+/.codegraph/
+*.db
+*.db-shm
+*.db-wal
