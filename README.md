@@ -88,6 +88,14 @@ cxq index
 
 A clean refresh also reconciles stale derived sessions: if a rollout no longer exists, its session and searchable messages are removed from the SQLite index. When catalog discovery or parsing reports warnings, stale deletion is skipped for that refresh so uncertain source files cannot cause destructive reconciliation.
 
+Inspect the existing index without refreshing it:
+
+```bash
+cxq status
+```
+
+`status` reports the database path, indexed session count, newest indexed session timestamp, and database size in bytes. It requires an existing index and will not create one implicitly. It intentionally does not claim a last-refresh timestamp or staleness state because those are not yet tracked as explicit index metadata.
+
 Indexed search is opt-in. The default `cxq search` command continues to scan the live Codex rollout files. Indexed results are also session-based: when several messages in one session match, only the highest-ranked FTS5 message represents that session, and `--limit` counts unique sessions.
 
 ```bash
@@ -118,6 +126,7 @@ Use a custom index database when needed:
 
 ```bash
 cxq index --db /path/to/index.db
+cxq status --db /path/to/index.db
 cxq search --index --db /path/to/index.db "WebRTC"
 cxq compare --db /path/to/index.db "WebRTC"
 ```

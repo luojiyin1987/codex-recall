@@ -48,6 +48,8 @@ func (c cliRunner) run(args []string) error {
 	switch args[0] {
 	case "index":
 		return c.runIndex(args[1:])
+	case "status":
+		return c.runStatus(args[1:])
 	case "list":
 		return c.runList(args[1:])
 	case "search":
@@ -107,6 +109,35 @@ func (c cliRunner) runIndex(args []string) error {
 		fmt.Fprintf(c.stderr, "cxq: index refresh completed with %d warning(s)\n", len(result.Warnings))
 	}
 	return nil
+}
+
+func (c cliRunner) runStatus(args []string) error {
+	flags := flag.NewFlagSet("status", flag.ContinueOnError)
+	flags.SetOutput(c.stderr)
+	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
+	dbFlag := flags.String("db", "", "SQLite index path (default: CODEX_HOME/.codex-recall/index.db)")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("status does not accept positional arguments; usage: cxq status [--home PATH] [--db PATH]")
+	}
+
+	home, err := resolveHome(*homeFlag)
+	if err != nil {
+		return err
+	}
+	result, err := indexer.Status(context.Background(), home, indexer.StatusOptions{DatabasePath: *dbFlag})
+	if err != nil {
+		return err
+	}
+
+	writer := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintf(writer, "DATABASE\t%s\n", result.DatabasePath)
+	fmt.Fprintf(writer, "SESSIONS\t%d\n", result.Sessions)
+	fmt.Fprintf(writer, "LATEST_SESSION\t%s\n", formatTimestamp(result.LatestSession))
+	fmt.Fprintf(writer, "DATABASE_BYTES\t%d\n", result.DatabaseBytes)
+	return writer.Flush()
 }
 
 func (c cliRunner) runList(args []string) error {
@@ -712,6 +743,7 @@ func (c cliRunner) printUsage() {
 
 Usage:
   cxq index [--home PATH] [--db PATH]
+  cxq status [--home PATH] [--db PATH]
   cxq list [--home PATH] [--project PROJECT] [--source SOURCE]
   cxq search [--index] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
   cxq compare [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
@@ -722,6 +754,7 @@ Usage:
 
 Commands:
   index   Build or refresh the local derived SQLite index
+  status  Show basic facts about the existing derived index
   list    Discover and list local Codex sessions, optionally filtered
   search  Search live conversation text, or the derived FTS index with --index
   compare Compare live and indexed search result sets for the same query
@@ -733,6 +766,7 @@ Commands:
 
 Examples:
   cxq index
+  cxq status
   cxq list --project deepseek-harness-remote
   cxq search --project deepseek-harness-remote "WebRTC"
   cxq search --index --project deepseek-harness-remote "WebRTC"
