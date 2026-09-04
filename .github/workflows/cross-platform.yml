@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    uses: luojiyin1987/cross-platform-ci/.github/workflows/build.yml@main
+    uses: luojiyin1987/cross-platform-ci/.github/workflows/build.yml@bf2e271adedb396d0fd0790ffe39207740b17e99
     with:
       package: ./cmd/cxq
       binary-name: cxq
