@@ -99,6 +99,7 @@ func (c cliRunner) runIndex(args []string) error {
 	fmt.Fprintf(writer, "DISCOVERED\t%d\n", result.Discovered)
 	fmt.Fprintf(writer, "INDEXED\t%d\n", result.Indexed)
 	fmt.Fprintf(writer, "SKIPPED\t%d\n", result.Skipped)
+	fmt.Fprintf(writer, "DELETED\t%d\n", result.Deleted)
 	if err := writer.Flush(); err != nil {
 		return err
 	}

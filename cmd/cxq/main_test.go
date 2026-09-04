@@ -670,3 +670,50 @@ func TestCLIRunnerCompareRequiresExistingIndex(t *testing.T) {
 		t.Fatalf("compare error = %v", err)
 	}
 }
+
+
+func TestCLIRunnerIndexReportsAndRemovesStaleSession(t *testing.T) {
+	home := t.TempDir()
+	sessionID := "019abc11-1234-7abc-8def-0123456789ab"
+	path := filepath.Join(home, "sessions", "2026", "09", "04", "rollout-2026-09-04T09-00-00-"+sessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Join([]string{
+		`{"timestamp":"2026-09-04T09:00:00Z","type":"session_meta","payload":{"id":"` + sessionID + `","timestamp":"2026-09-04T09:00:00Z","cwd":"/tmp/project","source":"vscode"}}`,
+		`{"timestamp":"2026-09-04T09:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"stale cli needle"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	if err := runner.run([]string{"index", "--home", home}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := runner.run([]string{"index", "--home", home}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "DELETED") || !strings.Contains(stdout.String(), "1") {
+		t.Fatalf("stale reconciliation stdout = %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stale reconciliation stderr = %q", stderr.String())
+	}
+
+	stdout.Reset()
+	if err := runner.run([]string{"search", "--index", "--home", home, "stale cli needle"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stdout.String(), sessionID) {
+		t.Fatalf("deleted rollout remained searchable: %q", stdout.String())
+	}
+}
