@@ -607,3 +607,66 @@ func TestCLIRunnerSearchRejectsDatabaseWithoutIndexMode(t *testing.T) {
 		t.Fatalf("search error = %v", err)
 	}
 }
+
+
+func TestCLIRunnerCompareReportsBackendDifferences(t *testing.T) {
+	home := t.TempDir()
+	writeCompareRollout := func(id, text string) {
+		t.Helper()
+		path := filepath.Join(home, "sessions", "2026", "09", "04", "rollout-2026-09-04T08-00-00-"+id+".jsonl")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := strings.Join([]string{
+			`{"timestamp":"2026-09-04T08:00:00Z","type":"session_meta","payload":{"id":"` + id + `","timestamp":"2026-09-04T08:00:00Z","cwd":"/tmp/demo","source":"vscode"}}`,
+			`{"timestamp":"2026-09-04T08:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"` + text + `"}}`,
+		}, "\n") + "\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeCompareRollout("both-session", "plain foo bar phrase")
+	writeCompareRollout("live-session", "prefix xfoo barz suffix")
+	writeCompareRollout("index-session", "punctuated foo-bar phrase")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	if err := runner.run([]string{"index", "--home", home}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := runner.run([]string{"compare", "--home", home, "foo bar"}); err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		"OVERLAP", "1",
+		"LIVE_ONLY", "1",
+		"INDEX_ONLY", "1",
+		"both-session",
+		"live-session",
+		"index-session",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("compare output missing %q: %q", want, output)
+		}
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("compare stderr = %q", stderr.String())
+	}
+}
+
+func TestCLIRunnerCompareRequiresExistingIndex(t *testing.T) {
+	home := t.TempDir()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	err := runner.run([]string{"compare", "--home", home, "needle"})
+	if err == nil || !strings.Contains(err.Error(), "run cxq index") {
+		t.Fatalf("compare error = %v", err)
+	}
+}

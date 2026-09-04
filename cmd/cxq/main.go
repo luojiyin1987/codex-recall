@@ -52,6 +52,8 @@ func (c cliRunner) run(args []string) error {
 		return c.runList(args[1:])
 	case "search":
 		return c.runSearch(args[1:])
+	case "compare":
+		return c.runCompare(args[1:])
 	case "show":
 		return c.runShow(args[1:])
 	case "resume":
@@ -241,6 +243,76 @@ func (c cliRunner) runSearch(args []string) error {
 
 	if len(result.Warnings) > 0 {
 		fmt.Fprintf(c.stderr, "cxq: skipped %d unreadable session file(s)\n", len(result.Warnings))
+	}
+	return nil
+}
+
+func (c cliRunner) runCompare(args []string) error {
+	flags := flag.NewFlagSet("compare", flag.ContinueOnError)
+	flags.SetOutput(c.stderr)
+	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
+	dbFlag := flags.String("db", "", "SQLite index path (default: CODEX_HOME/.codex-recall/index.db)")
+	limitFlag := flags.Int("limit", 20, "maximum results requested from each search backend")
+	projectFlag := flags.String("project", "", "only sessions whose project exactly matches this value")
+	sourceFlag := flags.String("source", "", "only sessions whose source exactly matches this value")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 || strings.TrimSpace(flags.Arg(0)) == "" {
+		return fmt.Errorf("usage: cxq compare [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY")
+	}
+	if *limitFlag <= 0 {
+		return fmt.Errorf("limit must be greater than zero")
+	}
+
+	home, err := resolveHome(*homeFlag)
+	if err != nil {
+		return err
+	}
+	result, err := indexer.Compare(context.Background(), home, indexer.CompareOptions{
+		DatabasePath: *dbFlag,
+		Query:        flags.Arg(0),
+		Limit:        *limitFlag,
+		Project:      *projectFlag,
+		Source:       *sourceFlag,
+	})
+	if err != nil {
+		return err
+	}
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(c.stderr, "cxq: warning: %v\n", warning)
+	}
+
+	writer := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintf(writer, "DATABASE\t%s\n", result.DatabasePath)
+	fmt.Fprintf(writer, "LIVE_RESULTS\t%d\n", result.LiveResults)
+	fmt.Fprintf(writer, "INDEX_RESULTS\t%d\n", result.IndexResults)
+	fmt.Fprintf(writer, "LIVE_SESSIONS\t%d\n", result.LiveSessions)
+	fmt.Fprintf(writer, "INDEX_SESSIONS\t%d\n", result.IndexSessions)
+	fmt.Fprintf(writer, "OVERLAP\t%d\n", result.Overlap)
+	fmt.Fprintf(writer, "LIVE_ONLY\t%d\n", result.LiveOnly)
+	fmt.Fprintf(writer, "INDEX_ONLY\t%d\n", result.IndexOnly)
+	fmt.Fprintln(writer)
+	fmt.Fprintln(writer, "STATUS\tSESSION\tLIVE_ROLE\tLIVE_MATCH\tINDEX_ROLE\tINDEX_MATCH")
+	for _, entry := range result.Entries {
+		liveRole, liveMatch := "-", "-"
+		if entry.Live != nil {
+			liveRole = entry.Live.Role
+			liveMatch = entry.Live.Snippet
+		}
+		indexRole, indexMatch := "-", "-"
+		if entry.Indexed != nil {
+			indexRole = entry.Indexed.Role
+			indexMatch = entry.Indexed.Snippet
+		}
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			entry.Status, entry.SessionID, liveRole, liveMatch, indexRole, indexMatch)
+	}
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+	if len(result.Warnings) > 0 {
+		fmt.Fprintf(c.stderr, "cxq: live search completed with %d warning(s)\n", len(result.Warnings))
 	}
 	return nil
 }
@@ -641,6 +713,7 @@ Usage:
   cxq index [--home PATH] [--db PATH]
   cxq list [--home PATH] [--project PROJECT] [--source SOURCE]
   cxq search [--index] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
+  cxq compare [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
   cxq show [--home PATH] SESSION
   cxq resume [--home PATH] SESSION
   cxq open [--home PATH] [--target TARGET] [--vscode-scheme SCHEME] SESSION
@@ -650,6 +723,7 @@ Commands:
   index   Build or refresh the local derived SQLite index
   list    Discover and list local Codex sessions, optionally filtered
   search  Search live conversation text, or the derived FTS index with --index
+  compare Compare live and indexed search result sets for the same query
   show    Show user and assistant messages from a session
   resume  Resume a session with the official Codex CLI
   open    Open a session in its source client
@@ -659,5 +733,7 @@ Commands:
 Examples:
   cxq index
   cxq list --project deepseek-harness-remote
-  cxq search --project deepseek-harness-remote "WebRTC"\n  cxq search --index --project deepseek-harness-remote "WebRTC"`)
+  cxq search --project deepseek-harness-remote "WebRTC"
+  cxq search --index --project deepseek-harness-remote "WebRTC"
+  cxq compare --project deepseek-harness-remote "WebRTC"`)
 }

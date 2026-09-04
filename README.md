@@ -76,6 +76,48 @@ cxq search --limit 10000 "Promise"
 
 The limit is a maximum result count. A large limit scans all candidates when fewer matching sessions exist.
 
+### Indexed search and backend comparison
+
+Build or refresh the derived SQLite/FTS5 index explicitly:
+
+```bash
+cxq index
+```
+
+Indexed search is opt-in. The default `cxq search` command continues to scan the live Codex rollout files.
+
+```bash
+cxq search --index "WebRTC"
+cxq search --index --project deepseek-harness-remote "WebRTC"
+```
+
+Use `compare` to run the live scanner and indexed FTS5 search with the same query and inspect where their returned session sets differ:
+
+```bash
+cxq compare "WebRTC"
+cxq compare --project deepseek-harness-remote "WebRTC"
+```
+
+The comparison summary reports:
+
+- `OVERLAP`: sessions returned by both backends
+- `LIVE_ONLY`: sessions returned only by the live rollout scanner
+- `INDEX_ONLY`: sessions returned only by the FTS5 index
+- `LIVE_RESULTS` / `INDEX_RESULTS`: raw top-N result counts before session deduplication
+- `LIVE_SESSIONS` / `INDEX_SESSIONS`: unique session counts
+
+Each comparison row also shows a representative live and/or indexed snippet, so the difference can be inspected directly.
+
+`compare` does not refresh the index. Run `cxq index` again when you want the indexed side to include newer rollout changes. This is intentional: stale-index differences remain visible instead of being hidden by an automatic refresh.
+
+Use a custom index database when needed:
+
+```bash
+cxq index --db /path/to/index.db
+cxq search --index --db /path/to/index.db "WebRTC"
+cxq compare --db /path/to/index.db "WebRTC"
+```
+
 `cxq search` also accepts `--project` and `--source` as case-insensitive exact-match filters over the displayed `PROJECT` and `SOURCE` values. When both are supplied, both conditions must match. Unlike `list`, `search` always requires exactly one non-blank `QUERY`.
 
 ```text
