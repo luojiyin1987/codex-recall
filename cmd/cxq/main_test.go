@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -885,6 +886,122 @@ func TestCLIRunnerStatusJSON(t *testing.T) {
 	}
 	if got.LatestSession == nil || *got.LatestSession != "2026-09-04T04:00:00Z" {
 		t.Fatalf("latest_session = %#v", got.LatestSession)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestCLIRunnerListJSONAppliesFilters(t *testing.T) {
+	home := t.TempDir()
+	writeSession := func(id, cwd, source string, hour int) {
+		t.Helper()
+		path := filepath.Join(home, "sessions", "2026", "09", "04", fmt.Sprintf("rollout-2026-09-04T%02d-00-00-%s.jsonl", hour, id))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := fmt.Sprintf("{\"timestamp\":\"2026-09-04T%02d:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":%q,\"timestamp\":\"2026-09-04T%02d:00:00Z\",\"cwd\":%q,\"source\":%q}}\n", hour, id, hour, cwd, source)
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeSession("json-list-a", "/work/alpha", "vscode", 5)
+	writeSession("json-list-b", "/work/beta", "cli", 4)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	if err := runner.run([]string{"list", "--json", "--home", home, "--project", "alpha"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var got listJSONOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON %q: %v", stdout.String(), err)
+	}
+	if got.SchemaVersion != 1 || len(got.Results) != 1 {
+		t.Fatalf("list JSON = %#v", got)
+	}
+	result := got.Results[0]
+	if result.SessionID != "json-list-a" || result.Project != "alpha" || result.Source != "vscode" {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.Timestamp == nil || *result.Timestamp != "2026-09-04T05:00:00Z" {
+		t.Fatalf("timestamp = %#v", result.Timestamp)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestCLIRunnerCompareJSONPreservesBackendEvidence(t *testing.T) {
+	home := t.TempDir()
+	writeCompareRollout := func(id, text string) {
+		t.Helper()
+		path := filepath.Join(home, "sessions", "2026", "09", "04", "rollout-2026-09-04T08-00-00-"+id+".jsonl")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := strings.Join([]string{
+			`{"timestamp":"2026-09-04T08:00:00Z","type":"session_meta","payload":{"id":"` + id + `","timestamp":"2026-09-04T08:00:00Z","cwd":"/tmp/demo","source":"vscode"}}`,
+			`{"timestamp":"2026-09-04T08:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"` + text + `"}}`,
+		}, "\n") + "\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeCompareRollout("both-session", "plain foo bar phrase")
+	writeCompareRollout("live-session", "prefix xfoo barz suffix")
+	writeCompareRollout("index-session", "punctuated foo-bar phrase")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	if err := runner.run([]string{"index", "--home", home}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := runner.run([]string{"compare", "--json", "--home", home, "foo bar"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var got compareJSONOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON %q: %v", stdout.String(), err)
+	}
+	if got.SchemaVersion != 1 || got.Query != "foo bar" {
+		t.Fatalf("compare JSON header = %#v", got)
+	}
+	if got.LiveResults != 2 || got.IndexResults != 2 || got.Overlap != 1 || got.LiveOnly != 1 || got.IndexOnly != 1 {
+		t.Fatalf("compare counts = %#v", got)
+	}
+	if len(got.Entries) != 3 {
+		t.Fatalf("entries = %#v", got.Entries)
+	}
+
+	byID := make(map[string]compareJSONEntry, len(got.Entries))
+	for _, entry := range got.Entries {
+		byID[entry.SessionID] = entry
+	}
+	both := byID["both-session"]
+	if both.Status != "both" || both.Live == nil || both.Indexed == nil {
+		t.Fatalf("both entry = %#v", both)
+	}
+	if both.Live.Ordinal != nil || both.Live.Score != nil || both.Live.Why != nil {
+		t.Fatalf("live entry fabricated indexed metadata: %#v", both.Live)
+	}
+	if both.Indexed.Ordinal == nil || both.Indexed.Score == nil || both.Indexed.Why == nil {
+		t.Fatalf("indexed entry lost metadata: %#v", both.Indexed)
+	}
+	liveOnly := byID["live-session"]
+	if liveOnly.Status != "live-only" || liveOnly.Live == nil || liveOnly.Indexed != nil {
+		t.Fatalf("live-only entry = %#v", liveOnly)
+	}
+	indexOnly := byID["index-session"]
+	if indexOnly.Status != "index-only" || indexOnly.Live != nil || indexOnly.Indexed == nil {
+		t.Fatalf("index-only entry = %#v", indexOnly)
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q", stderr.String())

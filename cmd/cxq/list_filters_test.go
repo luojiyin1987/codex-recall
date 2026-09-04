@@ -112,7 +112,7 @@ func TestCLIUsageShowsFilteredListExample(t *testing.T) {
 	}
 
 	help := stderr.String()
-	if !strings.Contains(help, "cxq list [--home PATH] [--project PROJECT] [--source SOURCE]") {
+	if !strings.Contains(help, "cxq list [--json] [--home PATH] [--project PROJECT] [--source SOURCE]") {
 		t.Fatalf("help missing list filters: %q", help)
 	}
 	if !strings.Contains(help, "cxq list --project deepseek-harness-remote") {

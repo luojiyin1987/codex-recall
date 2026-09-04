@@ -49,9 +49,10 @@ cxq list
 cxq list --project deepseek-harness-remote
 cxq list --source vscode
 cxq list --project deepseek-harness-remote --source vscode
+cxq list --json --project deepseek-harness-remote
 ```
 
-`list` can filter sessions without requiring a conversation-text query. `--project` and `--source` use case-insensitive exact matching after trimming surrounding whitespace. When both are supplied, both conditions must match.
+`list` can filter sessions without requiring a conversation-text query. `--project` and `--source` use case-insensitive exact matching after trimming surrounding whitespace. When both are supplied, both conditions must match. Machine-readable list output is available with `--json` and uses the same `schema_version: 1` contract.
 
 Search conversation text:
 
@@ -118,6 +119,7 @@ Use `compare` to run the live scanner and indexed FTS5 search with the same quer
 ```bash
 cxq compare "WebRTC"
 cxq compare --project deepseek-harness-remote "WebRTC"
+cxq compare --json "WebRTC"
 ```
 
 The comparison summary reports:
@@ -129,6 +131,8 @@ The comparison summary reports:
 - `LIVE_SESSIONS` / `INDEX_SESSIONS`: unique session counts (normally equal to the corresponding result count)
 
 Each comparison row also shows a representative live and/or indexed snippet, so the difference can be inspected directly.
+
+With `compare --json`, stdout contains the same summary counts plus structured `entries`. Each entry keeps separate `live` and `indexed` evidence using the search JSON result shape from `schema_version: 1`; the missing side is `null`.
 
 `compare` does not refresh the index. Run `cxq index` again when you want the indexed side to include newer rollout changes. This is intentional: stale-index differences remain visible instead of being hidden by an automatic refresh.
 
