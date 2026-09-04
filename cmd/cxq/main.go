@@ -72,6 +72,8 @@ func (c cliRunner) run(args []string) error {
 		return c.runSearch(args[1:])
 	case "compare":
 		return c.runCompare(args[1:])
+	case "pack":
+		return c.runPack(args[1:])
 	case "show":
 		return c.runShow(args[1:])
 	case "resume":
@@ -402,6 +404,74 @@ func (c cliRunner) runCompare(args []string) error {
 	}
 	if len(result.Warnings) > 0 {
 		fmt.Fprintf(c.stderr, "cxq: live search completed with %d warning(s)\n", len(result.Warnings))
+	}
+	return nil
+}
+
+func (c cliRunner) runPack(args []string) error {
+	flags := flag.NewFlagSet("pack", flag.ContinueOnError)
+	flags.SetOutput(c.stderr)
+	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
+	dbFlag := flags.String("db", "", "SQLite index path (default: CODEX_HOME/.codex-recall/index.db)")
+	limitFlag := flags.Int("limit", 5, "maximum number of indexed sessions to include")
+	projectFlag := flags.String("project", "", "only sessions whose project exactly matches this value")
+	sourceFlag := flags.String("source", "", "only sessions whose source exactly matches this value")
+	jsonFlag := flags.Bool("json", false, "write machine-readable JSON")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 || strings.TrimSpace(flags.Arg(0)) == "" {
+		return fmt.Errorf("usage: cxq pack [--json] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY")
+	}
+	if *limitFlag <= 0 {
+		return fmt.Errorf("limit must be greater than zero")
+	}
+
+	home, err := resolveHome(*homeFlag)
+	if err != nil {
+		return err
+	}
+	result, err := indexer.Pack(c.ctx, home, indexer.PackOptions{
+		DatabasePath: *dbFlag,
+		Query:        flags.Arg(0),
+		Limit:        *limitFlag,
+		Project:      *projectFlag,
+		Source:       *sourceFlag,
+	})
+	if err != nil {
+		return err
+	}
+	if *jsonFlag {
+		return writePackJSON(c.stdout, result)
+	}
+
+	fmt.Fprintln(c.stdout, "CONTEXT_PACK")
+	writer := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintf(writer, "QUERY\t%s\n", result.Query)
+	fmt.Fprintf(writer, "PROJECT\t%s\n", emptyDash(result.Project))
+	fmt.Fprintf(writer, "SOURCE\t%s\n", emptyDash(result.Source))
+	fmt.Fprintf(writer, "DATABASE\t%s\n", result.DatabasePath)
+	fmt.Fprintf(writer, "EVIDENCE\t%d\n", len(result.Evidence))
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+
+	for rank, evidence := range result.Evidence {
+		fmt.Fprintf(c.stdout, "\n[%d]\n", rank+1)
+		writer := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintf(writer, "SESSION\t%s\n", evidence.SessionID)
+		fmt.Fprintf(writer, "DATE\t%s\n", formatTimestamp(evidence.Timestamp))
+		fmt.Fprintf(writer, "PROJECT\t%s\n", emptyDash(evidence.Project))
+		fmt.Fprintf(writer, "SOURCE\t%s\n", emptyDash(evidence.Source))
+		fmt.Fprintf(writer, "ROLE\t%s\n", evidence.Role)
+		fmt.Fprintf(writer, "ORDINAL\t%d\n", evidence.Ordinal)
+		fmt.Fprintf(writer, "SCORE\t%g\n", evidence.Score)
+		fmt.Fprintf(writer, "WHY\t%s\n", evidence.Why)
+		fmt.Fprintf(writer, "RESUME\t%s\n", evidence.ResumeCommand)
+		fmt.Fprintf(writer, "MATCH\t%s\n", evidence.Snippet)
+		if err := writer.Flush(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -804,6 +874,7 @@ Usage:
   cxq list [--json] [--home PATH] [--project PROJECT] [--source SOURCE]
   cxq search [--json] [--index] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
   cxq compare [--json] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
+  cxq pack [--json] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
   cxq show [--home PATH] SESSION
   cxq resume [--home PATH] SESSION
   cxq open [--home PATH] [--target TARGET] [--vscode-scheme SCHEME] SESSION
@@ -815,6 +886,7 @@ Commands:
   list    Discover and list local Codex sessions, optionally filtered
   search  Search live conversation text, or the derived FTS index with --index
   compare Compare live and indexed search result sets for the same query
+  pack    Build a deterministic context pack from indexed search evidence
   show    Show user and assistant messages from a session
   resume  Resume a session with the official Codex CLI
   open    Open a session in its source client
@@ -831,5 +903,7 @@ Examples:
   cxq search --json --project deepseek-harness-remote "WebRTC"
   cxq search --index --json --project deepseek-harness-remote "WebRTC"
   cxq compare --project deepseek-harness-remote "WebRTC"
-  cxq compare --json --project deepseek-harness-remote "WebRTC"`)
+  cxq compare --json --project deepseek-harness-remote "WebRTC"
+  cxq pack --project deepseek-harness-remote "WebRTC"
+  cxq pack --json --project deepseek-harness-remote "WebRTC"`)
 }
