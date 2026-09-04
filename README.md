@@ -104,7 +104,9 @@ Machine-readable status output is available with:
 cxq status --json
 ```
 
-Indexed search is opt-in. The default `cxq search` command continues to scan the live Codex rollout files. Indexed results are also session-based: when several messages in one session match, only the highest-ranked FTS5 message represents that session, and `--limit` counts unique sessions.
+Indexed search is opt-in. The default `cxq search` command continues to scan the live Codex rollout files. Schema v3 uses the FTS5 `trigram` tokenizer for queries of three or more Unicode characters, improving substring-shaped lookups such as Chinese text, camelCase prefixes, UUID prefixes, and commit-SHA prefixes. One- and two-character queries use a case-insensitive literal scan of the derived `messages` table because trigram MATCH has no token shorter than three characters. Both paths remain derived-index only and never read rollout files implicitly.
+
+Indexed results remain session-based. FTS results use BM25 ranking; the short-query fallback is ordered by newest session then message ordinal, reports `why: lexical:substring`, and uses score `0` because it has no BM25 rank. When several messages in one session match, only one result represents that session, and `--limit` counts unique sessions.
 
 ```bash
 cxq search --index "WebRTC"
@@ -146,7 +148,7 @@ cxq pack --limit 10 --project codex-recall "sqlite index"
 cxq pack --json --project codex-recall "sqlite index"
 ```
 
-`pack` is indexed-only and never refreshes the database implicitly. The default limit is 5 sessions. Each evidence item preserves its session ID, timestamp, project, source, role, message ordinal, normalized snippet, FTS score, retrieval reason, and an exact `cxq resume SESSION` command.
+`pack` is indexed-only and never refreshes the database implicitly. The default limit is 5 sessions. Each evidence item preserves its session ID, timestamp, project, source, role, message ordinal, normalized snippet, retrieval score, retrieval reason, and an exact `cxq resume SESSION` command. FTS evidence carries its BM25 score; one- and two-character substring fallback evidence uses score `0`.
 
 The first version is intentionally deterministic retrieval packaging only. It does not extract decisions or todos, create a memory database, call an LLM, use embeddings, estimate model tokens, or resume Codex automatically. Run `cxq index` explicitly when the derived index needs refreshing.
 
@@ -327,7 +329,7 @@ Run the opt-in tokenizer benchmarks with:
 go test ./internal/indexer -run '^$' -bench 'BenchmarkRetrievalTokenizer' -benchmem
 ```
 
-This experiment does not change the production `messages_fts` tokenizer or schema. It exists to decide whether a later migration is justified by retrieval quality and cost evidence.
+This experiment is retained as the reproducible A/B harness that justified schema v3. Production indexed search now uses trigram for queries of three or more Unicode characters, while the experiment continues to compare trigram against the historical unicode61 baseline.
 
 ## Benchmarks
 

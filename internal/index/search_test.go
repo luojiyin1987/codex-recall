@@ -224,3 +224,83 @@ func TestSQLiteSearchNormalizesSnippetWhitespace(t *testing.T) {
 		t.Fatalf("snippet = %q, want normalized preview", matches[0].Snippet)
 	}
 }
+
+
+func TestSQLiteSearchTrigramFindsSubstringShapes(t *testing.T) {
+	cases := []struct {
+		name  string
+		text  string
+		query string
+	}{
+		{name: "Chinese continuous substring", text: "我们使用批量事务写入索引", query: "批量事务"},
+		{name: "camelCase prefix", text: "callbackInfo remains stable", query: "callback"},
+		{name: "UUID prefix", text: "019fe0cb-9760-78b1-b545-b5e90d1dd0d7", query: "019fe0"},
+		{name: "SHA prefix", text: "49bcc7e8ab386d700cb8ccfa5a5b72d97528898f", query: "49bcc7e8"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			idx := openTestIndex(t)
+			ctx := context.Background()
+			session := testSearchSession("substring", "/work/demo", "demo", "vscode", time.Now().UTC())
+			if err := idx.ReplaceSession(ctx, session, []Message{{Ordinal: 0, Role: "user", Text: tc.text}}); err != nil {
+				t.Fatal(err)
+			}
+			matches, err := idx.Search(ctx, SearchOptions{Query: tc.query, Limit: 10})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(matches) != 1 || matches[0].Session.ID != "substring" {
+				t.Fatalf("matches = %#v", matches)
+			}
+			if matches[0].Why != lexicalWhy {
+				t.Fatalf("why = %q, want %q", matches[0].Why, lexicalWhy)
+			}
+		})
+	}
+}
+
+func TestSQLiteSearchShortLiteralFallback(t *testing.T) {
+	idx := openTestIndex(t)
+	ctx := context.Background()
+	newer := testSearchSession("newer-short", "/work/alpha", "alpha", "vscode", time.Date(2026, 9, 4, 8, 0, 0, 0, time.UTC))
+	older := testSearchSession("older-short", "/work/beta", "beta", "cli", time.Date(2026, 9, 3, 8, 0, 0, 0, time.UTC))
+
+	if err := idx.ReplaceSession(ctx, older, []Message{{Ordinal: 0, Role: "assistant", Text: "Go 语言错误排查"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.ReplaceSession(ctx, newer, []Message{{Ordinal: 0, Role: "user", Text: "GO runtime 错误"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		query   string
+		project string
+		wantID  string
+	}{
+		{name: "two ASCII runes case insensitive", query: "go", wantID: "newer-short"},
+		{name: "one Chinese rune", query: "错", wantID: "newer-short"},
+		{name: "two Chinese runes with filter", query: "错误", project: "beta", wantID: "older-short"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			matches, err := idx.Search(ctx, SearchOptions{
+				Query: tc.query, Limit: 10, Project: tc.project,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(matches) == 0 || matches[0].Session.ID != tc.wantID {
+				t.Fatalf("matches = %#v, want first session %q", matches, tc.wantID)
+			}
+			if matches[0].Why != substringWhy {
+				t.Fatalf("why = %q, want %q", matches[0].Why, substringWhy)
+			}
+			if matches[0].Score != 0 {
+				t.Fatalf("score = %g, want 0 for unranked substring fallback", matches[0].Score)
+			}
+			if !strings.Contains(strings.ToLower(matches[0].Snippet), strings.ToLower(tc.query)) {
+				t.Fatalf("snippet = %q, want query %q", matches[0].Snippet, tc.query)
+			}
+		})
+	}
+}

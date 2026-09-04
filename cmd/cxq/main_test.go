@@ -646,16 +646,18 @@ func TestCLIRunnerCompareReportsBackendDifferences(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{
-		"OVERLAP", "1",
-		"LIVE_ONLY", "1",
-		"INDEX_ONLY", "1",
+		"OVERLAP         2",
+		"LIVE_ONLY       0",
+		"INDEX_ONLY      0",
 		"both-session",
 		"live-session",
-		"index-session",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("compare output missing %q: %q", want, output)
 		}
+	}
+	if strings.Contains(output, "index-session") {
+		t.Fatalf("compare output unexpectedly contains punctuation-only index match: %q", output)
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("compare stderr = %q", stderr.String())
@@ -975,10 +977,10 @@ func TestCLIRunnerCompareJSONPreservesBackendEvidence(t *testing.T) {
 	if got.SchemaVersion != 1 || got.Query != "foo bar" {
 		t.Fatalf("compare JSON header = %#v", got)
 	}
-	if got.LiveResults != 2 || got.IndexResults != 2 || got.Overlap != 1 || got.LiveOnly != 1 || got.IndexOnly != 1 {
+	if got.LiveResults != 2 || got.IndexResults != 2 || got.Overlap != 2 || got.LiveOnly != 0 || got.IndexOnly != 0 {
 		t.Fatalf("compare counts = %#v", got)
 	}
-	if len(got.Entries) != 3 {
+	if len(got.Entries) != 2 {
 		t.Fatalf("entries = %#v", got.Entries)
 	}
 
@@ -996,13 +998,12 @@ func TestCLIRunnerCompareJSONPreservesBackendEvidence(t *testing.T) {
 	if both.Indexed.Ordinal == nil || both.Indexed.Score == nil || both.Indexed.Why == nil {
 		t.Fatalf("indexed entry lost metadata: %#v", both.Indexed)
 	}
-	liveOnly := byID["live-session"]
-	if liveOnly.Status != "live-only" || liveOnly.Live == nil || liveOnly.Indexed != nil {
-		t.Fatalf("live-only entry = %#v", liveOnly)
+	liveAligned := byID["live-session"]
+	if liveAligned.Status != "both" || liveAligned.Live == nil || liveAligned.Indexed == nil {
+		t.Fatalf("live-session entry = %#v", liveAligned)
 	}
-	indexOnly := byID["index-session"]
-	if indexOnly.Status != "index-only" || indexOnly.Live != nil || indexOnly.Indexed == nil {
-		t.Fatalf("index-only entry = %#v", indexOnly)
+	if _, ok := byID["index-session"]; ok {
+		t.Fatalf("index-session unexpectedly matched query: %#v", byID["index-session"])
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q", stderr.String())

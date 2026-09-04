@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestCompareClassifiesSessionOverlapAndBackendOnlyHits(t *testing.T) {
+func TestCompareTrigramAlignsLiteralSubstringOverlap(t *testing.T) {
 	home := t.TempDir()
 	writeRollout(t, home, "both-session", "plain foo bar phrase", "answer")
 	writeRollout(t, home, "live-session", "prefix xfoo barz suffix", "answer")
@@ -34,7 +34,7 @@ func TestCompareClassifiesSessionOverlapAndBackendOnlyHits(t *testing.T) {
 	if result.LiveSessions != 2 || result.IndexSessions != 2 {
 		t.Fatalf("session counts = live %d index %d", result.LiveSessions, result.IndexSessions)
 	}
-	if result.Overlap != 1 || result.LiveOnly != 1 || result.IndexOnly != 1 {
+	if result.Overlap != 2 || result.LiveOnly != 0 || result.IndexOnly != 0 {
 		t.Fatalf("comparison counts = overlap %d live-only %d index-only %d", result.Overlap, result.LiveOnly, result.IndexOnly)
 	}
 
@@ -59,11 +59,11 @@ func TestCompareClassifiesSessionOverlapAndBackendOnlyHits(t *testing.T) {
 	if statuses["both-session"] != CompareBoth {
 		t.Fatalf("both-session status = %q", statuses["both-session"])
 	}
-	if statuses["live-session"] != CompareLiveOnly {
+	if statuses["live-session"] != CompareBoth {
 		t.Fatalf("live-session status = %q", statuses["live-session"])
 	}
-	if statuses["index-session"] != CompareIndexOnly {
-		t.Fatalf("index-session status = %q", statuses["index-session"])
+	if _, ok := statuses["index-session"]; ok {
+		t.Fatalf("index-session unexpectedly matched query: %q", statuses["index-session"])
 	}
 }
 
@@ -180,7 +180,7 @@ func TestCompareCoversChineseAndCodeQueryShapes(t *testing.T) {
 	}
 }
 
-func TestCompareDocumentsUnicode61SubstringBoundaries(t *testing.T) {
+func TestCompareTrigramCoversSubstringBoundaries(t *testing.T) {
 	cases := []struct {
 		name  string
 		text  string
@@ -223,14 +223,14 @@ func TestCompareDocumentsUnicode61SubstringBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result.LiveSessions != 1 || result.IndexSessions != 0 {
+			if result.LiveSessions != 1 || result.IndexSessions != 1 {
 				t.Fatalf("session counts = live %d index %d for query %q", result.LiveSessions, result.IndexSessions, tc.query)
 			}
-			if result.Overlap != 0 || result.LiveOnly != 1 || result.IndexOnly != 0 {
+			if result.Overlap != 1 || result.LiveOnly != 0 || result.IndexOnly != 0 {
 				t.Fatalf("comparison = overlap %d live-only %d index-only %d for query %q",
 					result.Overlap, result.LiveOnly, result.IndexOnly, tc.query)
 			}
-			if len(result.Entries) != 1 || result.Entries[0].Status != CompareLiveOnly {
+			if len(result.Entries) != 1 || result.Entries[0].Status != CompareBoth {
 				t.Fatalf("entries = %#v for query %q", result.Entries, tc.query)
 			}
 		})
