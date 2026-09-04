@@ -717,3 +717,57 @@ func TestCLIRunnerIndexReportsAndRemovesStaleSession(t *testing.T) {
 		t.Fatalf("deleted rollout remained searchable: %q", stdout.String())
 	}
 }
+
+func TestCLIRunnerStatusReportsExistingIndex(t *testing.T) {
+	home := t.TempDir()
+	sessionID := "019abc11-1234-7abc-8def-0123456789ab"
+	path := filepath.Join(home, "sessions", "2026", "09", "04", "rollout-2026-09-04T04-00-00-"+sessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Join([]string{
+		`{"timestamp":"2026-09-04T04:00:00Z","type":"session_meta","payload":{"id":"` + sessionID + `","timestamp":"2026-09-04T04:00:00Z","cwd":"/tmp/project","source":"vscode"}}`,
+		`{"timestamp":"2026-09-04T04:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"status message"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	if err := runner.run([]string{"index", "--home", home}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := runner.run([]string{"status", "--home", home}); err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	for _, want := range []string{"DATABASE", "SESSIONS", "1", "LATEST_SESSION", "DATABASE_BYTES"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("status output missing %q: %q", want, output)
+		}
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("status stderr = %q", stderr.String())
+	}
+}
+
+func TestCLIRunnerStatusRequiresExistingIndex(t *testing.T) {
+	home := t.TempDir()
+	indexPath := filepath.Join(home, ".codex-recall", "index.db")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	err := runner.run([]string{"status", "--home", home})
+	if err == nil || !strings.Contains(err.Error(), "run cxq index") {
+		t.Fatalf("status error = %v", err)
+	}
+	if _, statErr := os.Stat(indexPath); !os.IsNotExist(statErr) {
+		t.Fatalf("status created database unexpectedly: %v", statErr)
+	}
+}
