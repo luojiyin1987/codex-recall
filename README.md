@@ -84,7 +84,7 @@ Build or refresh the derived SQLite/FTS5 index explicitly:
 cxq index
 ```
 
-Indexed search is opt-in. The default `cxq search` command continues to scan the live Codex rollout files.
+Indexed search is opt-in. The default `cxq search` command continues to scan the live Codex rollout files. Indexed results are also session-based: when several messages in one session match, only the highest-ranked FTS5 message represents that session, and `--limit` counts unique sessions.
 
 ```bash
 cxq search --index "WebRTC"
@@ -103,8 +103,8 @@ The comparison summary reports:
 - `OVERLAP`: sessions returned by both backends
 - `LIVE_ONLY`: sessions returned only by the live rollout scanner
 - `INDEX_ONLY`: sessions returned only by the FTS5 index
-- `LIVE_RESULTS` / `INDEX_RESULTS`: raw top-N result counts before session deduplication
-- `LIVE_SESSIONS` / `INDEX_SESSIONS`: unique session counts
+- `LIVE_RESULTS` / `INDEX_RESULTS`: top-N result counts; both limits are session-based
+- `LIVE_SESSIONS` / `INDEX_SESSIONS`: unique session counts (normally equal to the corresponding result count)
 
 Each comparison row also shows a representative live and/or indexed snippet, so the difference can be inspected directly.
 

@@ -10,6 +10,9 @@ import (
 
 const lexicalWhy = "lexical:fts5"
 
+// Search returns at most one lexical match per session. FTS5 rows remain
+// globally ordered by relevance, so the first row seen for a session is its
+// highest-ranked representative message and Limit counts unique sessions.
 func (s *SQLiteIndex) Search(ctx context.Context, options SearchOptions) ([]SearchMatch, error) {
 	query := strings.TrimSpace(options.Query)
 	if query == "" {
@@ -36,7 +39,6 @@ func (s *SQLiteIndex) Search(ctx context.Context, options SearchOptions) ([]Sear
 	if len(filters) > 0 {
 		where += " AND " + strings.Join(filters, " AND ")
 	}
-	args = append(args, options.Limit)
 
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 SELECT
@@ -55,14 +57,14 @@ FROM messages_fts AS f
 JOIN sessions AS s ON s.session_id = f.session_id
 WHERE %s
 ORDER BY bm25(messages_fts) ASC, s.timestamp DESC, CAST(f.ordinal AS INTEGER) ASC
-LIMIT ?
 `, where), args...)
 	if err != nil {
 		return nil, fmt.Errorf("search sqlite lexical index: %w", err)
 	}
 	defer rows.Close()
 
-	matches := make([]SearchMatch, 0)
+	matches := make([]SearchMatch, 0, options.Limit)
+	seenSessions := make(map[string]struct{}, options.Limit)
 	for rows.Next() {
 		var match SearchMatch
 		var timestamp string
@@ -81,13 +83,21 @@ LIMIT ?
 		); err != nil {
 			return nil, fmt.Errorf("scan sqlite lexical match: %w", err)
 		}
+		if _, seen := seenSessions[match.Session.ID]; seen {
+			continue
+		}
+
 		parsed, err := time.Parse(time.RFC3339Nano, timestamp)
 		if err != nil {
 			return nil, fmt.Errorf("parse indexed session timestamp %q: %w", timestamp, err)
 		}
 		match.Session.Timestamp = parsed
 		match.Why = lexicalWhy
+		seenSessions[match.Session.ID] = struct{}{}
 		matches = append(matches, match)
+		if len(matches) == options.Limit {
+			break
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate sqlite lexical matches: %w", err)

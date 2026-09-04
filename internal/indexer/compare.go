@@ -43,7 +43,8 @@ type CompareResult struct {
 
 // Compare runs both current search backends for the same options and compares
 // the unique session IDs present in each backend's returned top-N result set.
-// It does not refresh the derived index.
+// Both backends now apply Limit to sessions, while their matching/ranking
+// semantics remain intentionally different. It does not refresh the index.
 func Compare(ctx context.Context, home string, options CompareOptions) (CompareResult, error) {
 	live, err := codex.Search(home, codex.SearchOptions{
 		Query:   options.Query,

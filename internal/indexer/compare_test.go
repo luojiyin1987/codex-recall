@@ -106,3 +106,28 @@ func TestCompareRequiresExistingDerivedIndex(t *testing.T) {
 		t.Fatalf("Compare() error = %v", err)
 	}
 }
+
+
+func TestCompareAppliesLimitToSessionsOnBothBackends(t *testing.T) {
+	home := t.TempDir()
+	writeRollout(t, home, "hot-session", "needle", "needle")
+	writeRollout(t, home, "other-session", "needle", "answer")
+
+	if _, err := Refresh(context.Background(), home, RefreshOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Compare(context.Background(), home, CompareOptions{
+		Query: "needle",
+		Limit: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.LiveResults != 2 || result.LiveSessions != 2 {
+		t.Fatalf("live counts = results %d sessions %d", result.LiveResults, result.LiveSessions)
+	}
+	if result.IndexResults != 2 || result.IndexSessions != 2 {
+		t.Fatalf("index counts = results %d sessions %d", result.IndexResults, result.IndexSessions)
+	}
+}
