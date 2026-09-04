@@ -292,3 +292,75 @@ func TestSQLiteIndexReplaceSessionRollsBackHashWhenMessageInsertFails(t *testing
 		t.Fatalf("message after rollback = %q, want %q", text, "keep me")
 	}
 }
+
+
+func TestSQLiteIndexSessionsListsStoredSessions(t *testing.T) {
+	idx := openTestIndex(t)
+	ctx := context.Background()
+	insertTestSession(t, idx, "session-b")
+	insertTestSession(t, idx, "session-a")
+
+	sessions, err := idx.Sessions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("len(sessions) = %d, want 2", len(sessions))
+	}
+	if sessions[0].ID != "session-a" || sessions[1].ID != "session-b" {
+		t.Fatalf("Sessions() order = %#v", sessions)
+	}
+}
+
+func TestSQLiteIndexDeleteSessionRemovesRelationalAndLexicalData(t *testing.T) {
+	idx := openTestIndex(t)
+	ctx := context.Background()
+	session := Session{
+		ID:          "stale-session",
+		Timestamp:   time.Date(2026, 9, 4, 8, 0, 0, 0, time.UTC),
+		CWD:         "/work/demo",
+		Project:     "demo",
+		Source:      "vscode",
+		RolloutPath: "/codex/stale-session.jsonl",
+		ContentHash: "v1:sha256:stale",
+	}
+	if err := idx.ReplaceSession(ctx, session, []Message{
+		{Ordinal: 0, Role: "user", Text: "stale searchable needle"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := idx.DeleteSession(ctx, session.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, found, err := idx.Session(ctx, session.ID); err != nil {
+		t.Fatal(err)
+	} else if found {
+		t.Fatal("deleted session still exists")
+	}
+
+	var messageCount int
+	if err := idx.db.QueryRow("SELECT count(*) FROM messages WHERE session_id = ?", session.ID).Scan(&messageCount); err != nil {
+		t.Fatal(err)
+	}
+	if messageCount != 0 {
+		t.Fatalf("relational message count = %d, want 0", messageCount)
+	}
+
+	var ftsCount int
+	if err := idx.db.QueryRow("SELECT count(*) FROM messages_fts WHERE session_id = ?", session.ID).Scan(&ftsCount); err != nil {
+		t.Fatal(err)
+	}
+	if ftsCount != 0 {
+		t.Fatalf("FTS message count = %d, want 0", ftsCount)
+	}
+
+	matches, err := idx.Search(ctx, SearchOptions{Query: "stale searchable", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("deleted session remained searchable: %#v", matches)
+	}
+}

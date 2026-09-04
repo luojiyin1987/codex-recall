@@ -48,6 +48,8 @@ type Index interface {
 	ReplaceMessages(ctx context.Context, sessionID string, messages []Message) error
 	ReplaceSession(ctx context.Context, session Session, messages []Message) error
 	Session(ctx context.Context, id string) (Session, bool, error)
+	Sessions(ctx context.Context) ([]Session, error)
+	DeleteSession(ctx context.Context, id string) error
 	Search(ctx context.Context, options SearchOptions) ([]SearchMatch, error)
 	Close() error
 }

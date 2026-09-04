@@ -16,13 +16,16 @@ const contentHashVersion = "v1"
 
 type Store interface {
 	Session(ctx context.Context, id string) (index.Session, bool, error)
+	Sessions(ctx context.Context) ([]index.Session, error)
 	ReplaceSession(ctx context.Context, session index.Session, messages []index.Message) error
+	DeleteSession(ctx context.Context, id string) error
 }
 
 type Result struct {
 	Discovered int
 	Indexed    int
 	Skipped    int
+	Deleted    int
 	Warnings   []error
 }
 
@@ -36,6 +39,11 @@ func Build(ctx context.Context, home string, store Store) (Result, error) {
 	}
 	if err != nil {
 		return result, fmt.Errorf("discover Codex sessions: %w", err)
+	}
+
+	currentSessionIDs := make(map[string]struct{}, len(sessions))
+	for _, session := range sessions {
+		currentSessionIDs[session.ID] = struct{}{}
 	}
 
 	for _, session := range sessions {
@@ -92,6 +100,25 @@ func Build(ctx context.Context, home string, store Store) (Result, error) {
 			return result, fmt.Errorf("replace indexed session %q: %w", session.ID, err)
 		}
 		result.Indexed++
+	}
+
+	if len(warnings) == 0 {
+		indexedSessions, err := store.Sessions(ctx)
+		if err != nil {
+			return result, fmt.Errorf("list indexed sessions for reconciliation: %w", err)
+		}
+		for _, indexedSession := range indexedSessions {
+			if err := ctx.Err(); err != nil {
+				return result, err
+			}
+			if _, current := currentSessionIDs[indexedSession.ID]; current {
+				continue
+			}
+			if err := store.DeleteSession(ctx, indexedSession.ID); err != nil {
+				return result, fmt.Errorf("delete stale indexed session %q: %w", indexedSession.ID, err)
+			}
+			result.Deleted++
+		}
 	}
 
 	return result, nil

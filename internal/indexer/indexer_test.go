@@ -14,6 +14,8 @@ type fakeStore struct {
 	sessions     map[string]index.Session
 	messages     map[string][]index.Message
 	replacements int
+	deletions    int
+	listCalls    int
 }
 
 func newFakeStore() *fakeStore {
@@ -26,6 +28,22 @@ func newFakeStore() *fakeStore {
 func (f *fakeStore) Session(_ context.Context, id string) (index.Session, bool, error) {
 	session, ok := f.sessions[id]
 	return session, ok, nil
+}
+
+func (f *fakeStore) Sessions(_ context.Context) ([]index.Session, error) {
+	f.listCalls++
+	sessions := make([]index.Session, 0, len(f.sessions))
+	for _, session := range f.sessions {
+		sessions = append(sessions, session)
+	}
+	return sessions, nil
+}
+
+func (f *fakeStore) DeleteSession(_ context.Context, id string) error {
+	delete(f.sessions, id)
+	delete(f.messages, id)
+	f.deletions++
+	return nil
 }
 
 func (f *fakeStore) ReplaceSession(_ context.Context, session index.Session, messages []index.Message) error {
@@ -216,5 +234,72 @@ func TestHashRolloutIsStableAndVersioned(t *testing.T) {
 	}
 	if len(first) != len(contentHashVersion+":sha256:")+64 {
 		t.Fatalf("hash length = %d", len(first))
+	}
+}
+
+
+func TestBuildDeletesStaleIndexedSessionsWhenCatalogIsClean(t *testing.T) {
+	home := t.TempDir()
+	path := writeRollout(t, home, "current", "hello", "world")
+	store := newFakeStore()
+	store.sessions["stale"] = index.Session{
+		ID:          "stale",
+		RolloutPath: "/old/stale.jsonl",
+		ContentHash: "v1:sha256:stale",
+	}
+	store.messages["stale"] = []index.Message{{SessionID: "stale", Ordinal: 0, Role: "user", Text: "old"}}
+
+	result, err := Build(context.Background(), home, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Deleted != 1 {
+		t.Fatalf("Deleted = %d, want 1", result.Deleted)
+	}
+	if _, ok := store.sessions["stale"]; ok {
+		t.Fatal("stale indexed session was not deleted")
+	}
+	if _, ok := store.sessions["current"]; !ok {
+		t.Fatal("current session was not indexed")
+	}
+	if store.deletions != 1 || store.listCalls != 1 {
+		t.Fatalf("deletions = %d, listCalls = %d", store.deletions, store.listCalls)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("current rollout disappeared: %v", err)
+	}
+}
+
+func TestBuildSkipsStaleDeletionWhenCatalogHasWarnings(t *testing.T) {
+	home := t.TempDir()
+	writeRollout(t, home, "current", "hello", "world")
+	root := filepath.Join(home, "sessions")
+	bad := filepath.Join(root, "broken.jsonl")
+	if err := os.WriteFile(bad, []byte(`{"type":"session_meta","payload":{"id":""}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := newFakeStore()
+	store.sessions["possibly-stale"] = index.Session{
+		ID:          "possibly-stale",
+		RolloutPath: "/old/possibly-stale.jsonl",
+		ContentHash: "v1:sha256:possibly-stale",
+	}
+
+	result, err := Build(context.Background(), home, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Warnings) == 0 {
+		t.Fatal("Build() did not preserve catalog warning")
+	}
+	if result.Deleted != 0 || store.deletions != 0 {
+		t.Fatalf("stale deletion ran despite catalog warning: %#v", result)
+	}
+	if store.listCalls != 0 {
+		t.Fatalf("Sessions() called %d time(s), want 0 when catalog has warnings", store.listCalls)
+	}
+	if _, ok := store.sessions["possibly-stale"]; !ok {
+		t.Fatal("possibly stale session was deleted despite catalog warning")
 	}
 }

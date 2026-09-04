@@ -84,6 +84,8 @@ Build or refresh the derived SQLite/FTS5 index explicitly:
 cxq index
 ```
 
+A clean refresh also reconciles stale derived sessions: if a rollout no longer exists, its session and searchable messages are removed from the SQLite index. When catalog discovery or parsing reports warnings, stale deletion is skipped for that refresh so uncertain source files cannot cause destructive reconciliation.
+
 Indexed search is opt-in. The default `cxq search` command continues to scan the live Codex rollout files. Indexed results are also session-based: when several messages in one session match, only the highest-ranked FTS5 message represents that session, and `--limit` counts unique sessions.
 
 ```bash

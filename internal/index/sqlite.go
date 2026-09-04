@@ -240,6 +240,70 @@ func validateMessages(sessionID string, messages []Message) error {
 	return nil
 }
 
+func (s *SQLiteIndex) Sessions(ctx context.Context) ([]Session, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT session_id, timestamp, cwd, project, source, rollout_path, content_hash
+FROM sessions
+ORDER BY session_id
+`)
+	if err != nil {
+		return nil, fmt.Errorf("list indexed sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []Session
+	for rows.Next() {
+		var session Session
+		var timestamp string
+		if err := rows.Scan(
+			&session.ID,
+			&timestamp,
+			&session.CWD,
+			&session.Project,
+			&session.Source,
+			&session.RolloutPath,
+			&session.ContentHash,
+		); err != nil {
+			return nil, fmt.Errorf("scan indexed session: %w", err)
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, timestamp)
+		if err != nil {
+			return nil, fmt.Errorf("parse indexed session timestamp %q: %w", timestamp, err)
+		}
+		session.Timestamp = parsed
+		sessions = append(sessions, session)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate indexed sessions: %w", err)
+	}
+	return sessions, nil
+}
+
+// DeleteSession atomically removes a stale derived session and all searchable
+// data associated with it.
+func (s *SQLiteIndex) DeleteSession(ctx context.Context, id string) error {
+	if id == "" {
+		return errors.New("session id must not be empty")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin indexed session deletion: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM messages_fts WHERE session_id = ?", id); err != nil {
+		return fmt.Errorf("delete lexical messages for session %q: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE session_id = ?", id); err != nil {
+		return fmt.Errorf("delete indexed session %q: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit indexed session deletion: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLiteIndex) Session(ctx context.Context, id string) (Session, bool, error) {
 	var session Session
 	var timestamp string
