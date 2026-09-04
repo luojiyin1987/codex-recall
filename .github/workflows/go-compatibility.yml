@@ -3,6 +3,7 @@ name: Go compatibility probe
 on:
   pull_request:
     paths:
+      - "**/*.go"
       - go.mod
       - go.sum
       - .github/workflows/go-compatibility.yml

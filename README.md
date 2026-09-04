@@ -259,23 +259,7 @@ rg --version
 Benchmarks are opt-in and are not run by the normal test suite. Run them explicitly with:
 
 ```bash
-go test ./internal/index ./internal/indexer ./internal/codex -run '^
-During development, `go run` avoids accidentally executing a stale binary:
-
-```bash
-go run ./cmd/cxq search "Promise"
-```
-
-## Design principles
-
-- Treat Codex session files as read-only input.
-- Tolerate unknown JSONL event types.
-- Search and show conversation text, not tool noise or reasoning data.
-- Delegate CLI session resumption to the official Codex CLI.
-- Delegate VS Code session display to the Codex extension.
-- Keep discovery, parsing, and search independent from future indexing layers.
-- Prefer a small, cross-platform CLI with minimal dependencies.
- -bench . -benchmem
+go test ./internal/index ./internal/indexer ./internal/codex -run '^$' -bench . -benchmem
 ```
 
 The benchmark datasets cover 100, 1,000, and 10,000 sessions. Index benchmarks report `db-bytes` alongside Go's standard `ns/op`, `B/op`, and `allocs/op` metrics. The live-search benchmark disables the optional `rg` fast path so results measure the same built-in scanner on every machine.
