@@ -116,11 +116,12 @@ func (c cliRunner) runStatus(args []string) error {
 	flags.SetOutput(c.stderr)
 	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
 	dbFlag := flags.String("db", "", "SQLite index path (default: CODEX_HOME/.codex-recall/index.db)")
+	jsonFlag := flags.Bool("json", false, "write machine-readable JSON")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return fmt.Errorf("status does not accept positional arguments; usage: cxq status [--home PATH] [--db PATH]")
+		return fmt.Errorf("status does not accept positional arguments; usage: cxq status [--json] [--home PATH] [--db PATH]")
 	}
 
 	home, err := resolveHome(*homeFlag)
@@ -130,6 +131,9 @@ func (c cliRunner) runStatus(args []string) error {
 	result, err := indexer.Status(context.Background(), home, indexer.StatusOptions{DatabasePath: *dbFlag})
 	if err != nil {
 		return err
+	}
+	if *jsonFlag {
+		return writeStatusJSON(c.stdout, result)
 	}
 
 	writer := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
@@ -205,6 +209,7 @@ func (c cliRunner) runSearch(args []string) error {
 	sourceFlag := flags.String("source", "", "only sessions whose source exactly matches this value")
 	indexFlag := flags.Bool("index", false, "search the derived SQLite FTS index instead of live rollout files")
 	dbFlag := flags.String("db", "", "SQLite index path for --index (default: CODEX_HOME/.codex-recall/index.db)")
+	jsonFlag := flags.Bool("json", false, "write machine-readable JSON")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -212,7 +217,7 @@ func (c cliRunner) runSearch(args []string) error {
 		return fmt.Errorf("search requires QUERY; to list sessions without a text query, use cxq list [--project PROJECT] [--source SOURCE]")
 	}
 	if flags.NArg() != 1 {
-		return fmt.Errorf("search accepts exactly one QUERY; usage: cxq search [--index] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY")
+		return fmt.Errorf("search accepts exactly one QUERY; usage: cxq search [--json] [--index] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY")
 	}
 	if strings.TrimSpace(flags.Arg(0)) == "" {
 		return fmt.Errorf("search requires a non-blank QUERY")
@@ -240,6 +245,9 @@ func (c cliRunner) runSearch(args []string) error {
 		if err != nil {
 			return err
 		}
+		if *jsonFlag {
+			return writeIndexedSearchJSON(c.stdout, query, result.Matches)
+		}
 
 		writer := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
 		fmt.Fprintln(writer, "DATE\tPROJECT\tSOURCE\tROLE\tSESSION\tMATCH")
@@ -261,6 +269,15 @@ func (c cliRunner) runSearch(args []string) error {
 	}
 	for _, searchErr := range result.Warnings {
 		fmt.Fprintf(c.stderr, "cxq: warning: %v\n", searchErr)
+	}
+	if *jsonFlag {
+		if err := writeLiveSearchJSON(c.stdout, query, result.Matches); err != nil {
+			return err
+		}
+		if len(result.Warnings) > 0 {
+			fmt.Fprintf(c.stderr, "cxq: skipped %d unreadable session file(s)\n", len(result.Warnings))
+		}
+		return nil
 	}
 
 	writer := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
@@ -743,9 +760,9 @@ func (c cliRunner) printUsage() {
 
 Usage:
   cxq index [--home PATH] [--db PATH]
-  cxq status [--home PATH] [--db PATH]
+  cxq status [--json] [--home PATH] [--db PATH]
   cxq list [--home PATH] [--project PROJECT] [--source SOURCE]
-  cxq search [--index] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
+  cxq search [--json] [--index] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
   cxq compare [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
   cxq show [--home PATH] SESSION
   cxq resume [--home PATH] SESSION
@@ -767,8 +784,10 @@ Commands:
 Examples:
   cxq index
   cxq status
+  cxq status --json
   cxq list --project deepseek-harness-remote
   cxq search --project deepseek-harness-remote "WebRTC"
-  cxq search --index --project deepseek-harness-remote "WebRTC"
+  cxq search --json --project deepseek-harness-remote "WebRTC"
+  cxq search --index --json --project deepseek-harness-remote "WebRTC"
   cxq compare --project deepseek-harness-remote "WebRTC"`)
 }

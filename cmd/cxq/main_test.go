@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -769,5 +770,123 @@ func TestCLIRunnerStatusRequiresExistingIndex(t *testing.T) {
 	}
 	if _, statErr := os.Stat(indexPath); !os.IsNotExist(statErr) {
 		t.Fatalf("status created database unexpectedly: %v", statErr)
+	}
+}
+
+func TestCLIRunnerSearchJSONLiveAndIndexed(t *testing.T) {
+	home := t.TempDir()
+	sessionID := "019abc11-1234-7abc-8def-0123456789ab"
+	path := filepath.Join(home, "sessions", "2026", "09", "04", "rollout-2026-09-04T07-00-00-"+sessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Join([]string{
+		`{"timestamp":"2026-09-04T07:00:00Z","type":"session_meta","payload":{"id":"` + sessionID + `","timestamp":"2026-09-04T07:00:00Z","cwd":"/tmp/project","source":"vscode"}}`,
+		`{"timestamp":"2026-09-04T07:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"JSON WebRTC transport"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	if err := runner.run([]string{"index", "--home", home}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		backend string
+		indexed bool
+	}{
+		{name: "live", args: []string{"search", "--json", "--home", home, "WebRTC transport"}, backend: "live"},
+		{name: "index", args: []string{"search", "--index", "--json", "--home", home, "WebRTC transport"}, backend: "index", indexed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout.Reset()
+			stderr.Reset()
+			if err := runner.run(tc.args); err != nil {
+				t.Fatal(err)
+			}
+
+			var got searchJSONOutput
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatalf("invalid JSON %q: %v", stdout.String(), err)
+			}
+			if got.SchemaVersion != 1 || got.Backend != tc.backend || got.Query != "WebRTC transport" {
+				t.Fatalf("search JSON header = %#v", got)
+			}
+			if len(got.Results) != 1 {
+				t.Fatalf("results = %#v", got.Results)
+			}
+			result := got.Results[0]
+			if result.SessionID != sessionID || result.Project != "project" || result.Source != "vscode" || result.Role != "user" {
+				t.Fatalf("result = %#v", result)
+			}
+			if result.Timestamp == nil || *result.Timestamp != "2026-09-04T07:00:00Z" {
+				t.Fatalf("timestamp = %#v", result.Timestamp)
+			}
+			if !strings.Contains(result.Snippet, "WebRTC transport") {
+				t.Fatalf("snippet = %q", result.Snippet)
+			}
+			if tc.indexed {
+				if result.Ordinal == nil || result.Score == nil || result.Why == nil || *result.Why != "lexical:fts5" {
+					t.Fatalf("indexed metadata = %#v", result)
+				}
+			} else if result.Ordinal != nil || result.Score != nil || result.Why != nil {
+				t.Fatalf("live result fabricated indexed metadata: %#v", result)
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("stderr = %q", stderr.String())
+			}
+		})
+	}
+}
+
+func TestCLIRunnerStatusJSON(t *testing.T) {
+	home := t.TempDir()
+	sessionID := "019abc11-1234-7abc-8def-0123456789ab"
+	path := filepath.Join(home, "sessions", "2026", "09", "04", "rollout-2026-09-04T04-00-00-"+sessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Join([]string{
+		`{"timestamp":"2026-09-04T04:00:00Z","type":"session_meta","payload":{"id":"` + sessionID + `","timestamp":"2026-09-04T04:00:00Z","cwd":"/tmp/project","source":"vscode"}}`,
+		`{"timestamp":"2026-09-04T04:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"status json"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	if err := runner.run([]string{"index", "--home", home}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := runner.run([]string{"status", "--json", "--home", home}); err != nil {
+		t.Fatal(err)
+	}
+
+	var got statusJSONOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON %q: %v", stdout.String(), err)
+	}
+	if got.SchemaVersion != 1 || got.Sessions != 1 || got.DatabaseBytes <= 0 {
+		t.Fatalf("status JSON = %#v", got)
+	}
+	if got.Database != filepath.Join(home, ".codex-recall", "index.db") {
+		t.Fatalf("database = %q", got.Database)
+	}
+	if got.LatestSession == nil || *got.LatestSession != "2026-09-04T04:00:00Z" {
+		t.Fatalf("latest_session = %#v", got.LatestSession)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

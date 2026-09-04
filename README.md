@@ -61,6 +61,7 @@ cxq search --limit 5 "annotated tag"
 cxq search --project lint-md "Promise"
 cxq search --source vscode "annotated tag"
 cxq search --project cve-lite-cli --source vscode "tag"
+cxq search --json "Promise"
 ```
 
 Search is a case-insensitive literal match over user and assistant conversation text. Tool output, reasoning records, and session metadata are excluded. The first matching message from each session is shown with a compact snippet.
@@ -96,12 +97,21 @@ cxq status
 
 `status` reports the database path, indexed session count, newest indexed session timestamp, and database size in bytes. It requires an existing index and will not create one implicitly. It intentionally does not claim a last-refresh timestamp or staleness state because those are not yet tracked as explicit index metadata.
 
+Machine-readable status output is available with:
+
+```bash
+cxq status --json
+```
+
 Indexed search is opt-in. The default `cxq search` command continues to scan the live Codex rollout files. Indexed results are also session-based: when several messages in one session match, only the highest-ranked FTS5 message represents that session, and `--limit` counts unique sessions.
 
 ```bash
 cxq search --index "WebRTC"
 cxq search --index --project deepseek-harness-remote "WebRTC"
+cxq search --index --json "WebRTC"
 ```
+
+When `--json` is used with `search`, stdout contains one JSON document with `schema_version: 1`, the selected backend, the query, and the result array. Live and indexed results share the same fields. Index-only metadata (`ordinal`, `score`, and `why`) is `null` for live results. Timestamps use RFC3339Nano in UTC. Warnings remain on stderr.
 
 Use `compare` to run the live scanner and indexed FTS5 search with the same query and inspect where their returned session sets differ:
 
@@ -127,6 +137,7 @@ Use a custom index database when needed:
 ```bash
 cxq index --db /path/to/index.db
 cxq status --db /path/to/index.db
+cxq status --json --db /path/to/index.db
 cxq search --index --db /path/to/index.db "WebRTC"
 cxq compare --db /path/to/index.db "WebRTC"
 ```
