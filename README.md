@@ -309,6 +309,26 @@ The evaluation builds a real derived SQLite/FTS5 index, runs both the built-in l
 
 The fixture is synthetic and anonymized; it captures realistic query shapes without committing private Codex conversation history.
 
+### Trigram experiment
+
+The repository also includes a test-only tokenizer experiment that builds two standalone FTS5 databases from the same evaluation corpus: one with `unicode61` and one with `trigram`.
+
+Run the comparison with:
+
+```bash
+go test ./internal/indexer -run TestTrigramRetrievalExperiment -v
+```
+
+The report includes Hit@5, MRR, database bytes, index build time, total search time, average search time, and categorized misses for each tokenizer. The standalone databases have the same FTS shape so the size and timing comparison isolates tokenizer behavior rather than production relational-table overhead.
+
+Run the opt-in tokenizer benchmarks with:
+
+```bash
+go test ./internal/indexer -run '^$' -bench 'BenchmarkRetrievalTokenizer' -benchmem
+```
+
+This experiment does not change the production `messages_fts` tokenizer or schema. It exists to decide whether a later migration is justified by retrieval quality and cost evidence.
+
 ## Benchmarks
 
 Benchmarks are opt-in and are not run by the normal test suite. Run them explicitly with:
