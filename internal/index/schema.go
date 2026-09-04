@@ -1,6 +1,6 @@
 package index
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS sessions (
@@ -53,5 +53,18 @@ WHERE NOT EXISTS (
     WHERE f.session_id = m.session_id
       AND f.ordinal = m.ordinal
 )`,
+	},
+	3: {
+		`DROP TABLE IF EXISTS messages_fts`,
+		`CREATE VIRTUAL TABLE messages_fts USING fts5(
+    session_id UNINDEXED,
+    ordinal UNINDEXED,
+    role UNINDEXED,
+    text,
+    tokenize = 'trigram'
+)`,
+		`INSERT INTO messages_fts (session_id, ordinal, role, text)
+SELECT m.session_id, m.ordinal, m.role, m.text
+FROM messages AS m`,
 	},
 }

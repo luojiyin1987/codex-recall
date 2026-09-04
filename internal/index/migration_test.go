@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -55,6 +56,76 @@ VALUES (?, ?, ?, ?, ?)
 		t.Fatal(err)
 	}
 	if len(matches) != 1 || matches[0].Session.ID != "legacy" {
+		t.Fatalf("matches = %#v", matches)
+	}
+}
+
+
+func TestOpenSQLiteMigratesV2Unicode61FTSToTrigram(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v2.db")
+	db, err := sql.Open(sqliteDriverName, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range schemaStatements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, statement := range schemaMigrations[2] {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec("PRAGMA user_version = 2"); err != nil {
+		t.Fatal(err)
+	}
+
+	timestamp := time.Date(2026, 9, 4, 6, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+	if _, err := db.Exec(`
+INSERT INTO sessions (
+    session_id, timestamp, cwd, project, source, rollout_path, content_hash, indexed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`, "legacy-v2", timestamp, "/work/legacy", "legacy", "vscode", "/codex/legacy-v2.jsonl", "hash-v2", timestamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO messages (session_id, ordinal, role, text, timestamp)
+VALUES (?, ?, ?, ?, ?)
+`, "legacy-v2", 0, "user", "我们使用批量事务写入索引", timestamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO messages_fts (session_id, ordinal, role, text)
+VALUES (?, ?, ?, ?)
+`, "legacy-v2", 0, "user", "我们使用批量事务写入索引"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+
+	assertSchemaVersion(t, idx.db, schemaVersion)
+
+	var ftsSQL string
+	if err := idx.db.QueryRow("SELECT sql FROM sqlite_master WHERE name = 'messages_fts'").Scan(&ftsSQL); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ToLower(ftsSQL), "trigram") {
+		t.Fatalf("messages_fts schema = %q, want trigram tokenizer", ftsSQL)
+	}
+
+	matches, err := idx.Search(context.Background(), SearchOptions{Query: "批量事务", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Session.ID != "legacy-v2" {
 		t.Fatalf("matches = %#v", matches)
 	}
 }

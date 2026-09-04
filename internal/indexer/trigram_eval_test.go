@@ -33,13 +33,14 @@ func TestTrigramRetrievalExperiment(t *testing.T) {
 	logTokenizerExperiment(t, unicode, len(corpus.Queries))
 	logTokenizerExperiment(t, trigram, len(corpus.Queries))
 
-	if unicode.Hits < corpus.MinimumIndexHitAt5 {
-		t.Fatalf("unicode61 Hit@5 = %d/%d, baseline floor is %d",
-			unicode.Hits, len(corpus.Queries), corpus.MinimumIndexHitAt5)
+	const unicode61HistoricalHitAt5 = 14
+	if unicode.Hits < unicode61HistoricalHitAt5 {
+		t.Fatalf("unicode61 Hit@5 = %d/%d, historical floor is %d",
+			unicode.Hits, len(corpus.Queries), unicode61HistoricalHitAt5)
 	}
-	if trigram.Hits < unicode.Hits {
-		t.Fatalf("trigram Hit@5 = %d/%d, below unicode61 %d/%d",
-			trigram.Hits, len(corpus.Queries), unicode.Hits, len(corpus.Queries))
+	if trigram.Hits < corpus.MinimumIndexHitAt5 {
+		t.Fatalf("trigram Hit@5 = %d/%d, production floor is %d",
+			trigram.Hits, len(corpus.Queries), corpus.MinimumIndexHitAt5)
 	}
 }
 

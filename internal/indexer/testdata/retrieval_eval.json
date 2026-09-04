@@ -2,7 +2,7 @@
   "schema_version": 1,
   "limit": 5,
   "minimum_live_hit_at_5": 17,
-  "minimum_index_hit_at_5": 14,
+  "minimum_index_hit_at_5": 17,
   "sessions": [
     {
       "id": "eval-batch",
