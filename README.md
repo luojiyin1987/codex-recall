@@ -26,6 +26,8 @@ Each release also includes `SHA256SUMS` for verifying downloaded archives.
 
 ### Go install
 
+The module currently declares Go 1.24. Compatibility probing on 2026-09-04 showed that Go 1.22.12 works on Linux x64 and macOS x64 but fails on current macOS ARM64 because generated test and application binaries abort with a missing `LC_UUID` load command. Go 1.23.12 passes tests, native build, and an SQLite index/search smoke test on Linux x64, macOS x64, and macOS ARM64. Go 1.24.13 also passes all probes and emits `LC_UUID` on macOS. The declared minimum remains Go 1.24 until a separate compatibility-baseline change is made.
+
 If Go is already installed:
 
 ```bash
