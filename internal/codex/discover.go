@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -29,10 +30,21 @@ func ResolveHome() (string, error) {
 // archived session roots. Results are sorted to make CLI output and tests
 // deterministic.
 func DiscoverFiles(home string) ([]string, error) {
+	return DiscoverFilesContext(context.Background(), home)
+}
+
+// DiscoverFilesContext is DiscoverFiles with cooperative cancellation.
+func DiscoverFilesContext(ctx context.Context, home string) ([]string, error) {
 	var files []string
 	for _, name := range rolloutRoots {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		root := filepath.Join(home, name)
 		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if walkErr != nil {
 				return walkErr
 			}
@@ -49,6 +61,9 @@ func DiscoverFiles(home string) ([]string, error) {
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	sort.Strings(files)
 	return files, nil
 }

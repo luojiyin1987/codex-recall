@@ -46,7 +46,7 @@ type CompareResult struct {
 // Both backends now apply Limit to sessions, while their matching/ranking
 // semantics remain intentionally different. It does not refresh the index.
 func Compare(ctx context.Context, home string, options CompareOptions) (CompareResult, error) {
-	live, err := codex.Search(home, codex.SearchOptions{
+	live, err := codex.SearchContext(ctx, home, codex.SearchOptions{
 		Query:   options.Query,
 		Limit:   options.Limit,
 		Project: options.Project,

@@ -9,6 +9,7 @@ import (
 	"time"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -19,24 +20,39 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	if err := runContext(ctx, os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "cxq:", err)
 		os.Exit(1)
 	}
 }
 
 type cliRunner struct {
+	ctx    context.Context
 	stdin  io.Reader
 	stdout io.Writer
 	stderr io.Writer
 }
 
 func run(args []string) error {
-	return newCLIRunner(os.Stdin, os.Stdout, os.Stderr).run(args)
+	return runContext(context.Background(), args)
+}
+
+func runContext(ctx context.Context, args []string) error {
+	return newCLIRunnerWithContext(ctx, os.Stdin, os.Stdout, os.Stderr).run(args)
 }
 
 func newCLIRunner(stdin io.Reader, stdout, stderr io.Writer) cliRunner {
-	return cliRunner{stdin: stdin, stdout: stdout, stderr: stderr}
+	return newCLIRunnerWithContext(context.Background(), stdin, stdout, stderr)
+}
+
+func newCLIRunnerWithContext(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) cliRunner {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return cliRunner{ctx: ctx, stdin: stdin, stdout: stdout, stderr: stderr}
 }
 
 func (c cliRunner) run(args []string) error {
@@ -88,7 +104,7 @@ func (c cliRunner) runIndex(args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := indexer.Refresh(context.Background(), home, indexer.RefreshOptions{DatabasePath: *dbFlag})
+	result, err := indexer.Refresh(c.ctx, home, indexer.RefreshOptions{DatabasePath: *dbFlag})
 	if err != nil {
 		return err
 	}
@@ -128,7 +144,7 @@ func (c cliRunner) runStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := indexer.Status(context.Background(), home, indexer.StatusOptions{DatabasePath: *dbFlag})
+	result, err := indexer.Status(c.ctx, home, indexer.StatusOptions{DatabasePath: *dbFlag})
 	if err != nil {
 		return err
 	}
@@ -163,7 +179,7 @@ func (c cliRunner) runList(args []string) error {
 		return err
 	}
 
-	sessions, warnings, err := codex.NewCatalog(home).Sessions()
+	sessions, warnings, err := codex.NewCatalog(home).SessionsContext(c.ctx)
 	if err != nil {
 		return fmt.Errorf("discover sessions: %w", err)
 	}
@@ -249,7 +265,7 @@ func (c cliRunner) runSearch(args []string) error {
 		return err
 	}
 	if *indexFlag {
-		result, err := indexer.Search(context.Background(), home, indexer.SearchOptions{
+		result, err := indexer.Search(c.ctx, home, indexer.SearchOptions{
 			DatabasePath: *dbFlag,
 			Query:        query,
 			Limit:        *limitFlag,
@@ -272,7 +288,7 @@ func (c cliRunner) runSearch(args []string) error {
 		return writer.Flush()
 	}
 
-	result, err := codex.Search(home, codex.SearchOptions{
+	result, err := codex.SearchContext(c.ctx, home, codex.SearchOptions{
 		Query:   query,
 		Limit:   *limitFlag,
 		Project: *projectFlag,
@@ -333,7 +349,7 @@ func (c cliRunner) runCompare(args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := indexer.Compare(context.Background(), home, indexer.CompareOptions{
+	result, err := indexer.Compare(c.ctx, home, indexer.CompareOptions{
 		DatabasePath: *dbFlag,
 		Query:        flags.Arg(0),
 		Limit:        *limitFlag,

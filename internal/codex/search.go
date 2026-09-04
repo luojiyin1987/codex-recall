@@ -1,10 +1,10 @@
 package codex
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -51,6 +51,14 @@ type eventMessage struct {
 
 // Search finds the newest conversation matches that satisfy the options.
 func Search(home string, options SearchOptions) (SearchResult, error) {
+	return SearchContext(context.Background(), home, options)
+}
+
+// SearchContext is Search with cooperative cancellation.
+func SearchContext(ctx context.Context, home string, options SearchOptions) (SearchResult, error) {
+	if err := ctx.Err(); err != nil {
+		return SearchResult{}, err
+	}
 	if options.Limit <= 0 {
 		return SearchResult{}, errors.New("search limit must be greater than zero")
 	}
@@ -58,7 +66,7 @@ func Search(home string, options SearchOptions) (SearchResult, error) {
 		return SearchResult{}, errors.New("search query must not be empty")
 	}
 
-	paths, err := searchCandidateFiles(home, options.Query, exec.LookPath, runCommand)
+	paths, err := searchCandidateFilesContext(ctx, home, options.Query)
 	if err != nil {
 		return SearchResult{}, fmt.Errorf("discover search candidates: %w", err)
 	}
@@ -68,8 +76,14 @@ func Search(home string, options SearchOptions) (SearchResult, error) {
 			return matchesSessionFilters(session, options.Project, options.Source)
 		}
 	}
-	candidates := NewCatalog(home).rankCandidates(paths, include)
-	matches, warnings := searchFiles(candidates, options.Query, options.Limit)
+	candidates, err := NewCatalog(home).rankCandidatesContext(ctx, paths, include)
+	if err != nil {
+		return SearchResult{}, err
+	}
+	matches, warnings, err := searchFilesContext(ctx, candidates, options.Query, options.Limit)
+	if err != nil {
+		return SearchResult{Matches: matches, Warnings: warnings}, err
+	}
 	return SearchResult{Matches: matches, Warnings: warnings}, nil
 }
 
@@ -87,24 +101,41 @@ func matchesSessionFilters(session Session, project, source string) bool {
 
 // searchFiles scans ordered candidates until it reaches limit.
 func searchFiles(candidates []SearchCandidate, query string, limit int) ([]SearchMatch, []error) {
+	matches, warnings, err := searchFilesContext(context.Background(), candidates, query, limit)
+	if err != nil {
+		warnings = append(warnings, err)
+	}
+	return matches, warnings
+}
+
+func searchFilesContext(ctx context.Context, candidates []SearchCandidate, query string, limit int) ([]SearchMatch, []error, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	if limit <= 0 {
-		return nil, []error{errors.New("search limit must be greater than zero")}
+		return nil, nil, errors.New("search limit must be greater than zero")
 	}
 	matcher, err := compileSearchMatcher(query)
 	if err != nil {
-		return nil, []error{err}
+		return nil, nil, err
 	}
 
 	capacity := min(limit, len(candidates))
 	matches := make([]SearchMatch, 0, capacity)
 	var searchErrors []error
 	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return matches, searchErrors, err
+		}
 		var session *Session
 		if candidate.hasSession {
 			session = &candidate.session
 		}
-		match, ok, err := searchFile(candidate.Path, matcher, session)
+		match, ok, err := searchFileContext(ctx, candidate.Path, matcher, session)
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return matches, searchErrors, ctxErr
+			}
 			searchErrors = append(searchErrors, err)
 			continue
 		}
@@ -116,7 +147,10 @@ func searchFiles(candidates []SearchCandidate, query string, limit int) ([]Searc
 			break
 		}
 	}
-	return matches, searchErrors
+	if err := ctx.Err(); err != nil {
+		return matches, searchErrors, err
+	}
+	return matches, searchErrors, nil
 }
 
 // SearchFile returns the first user/assistant conversation match in a rollout.
@@ -126,7 +160,7 @@ func SearchFile(path, query string) (SearchMatch, bool, error) {
 	if err != nil {
 		return SearchMatch{}, false, err
 	}
-	return searchFile(path, matcher, nil)
+	return searchFileContext(context.Background(), path, matcher, nil)
 }
 
 func compileSearchMatcher(query string) (*regexp.Regexp, error) {
@@ -141,10 +175,13 @@ func compileSearchMatcher(query string) (*regexp.Regexp, error) {
 }
 
 func searchFile(path string, matcher *regexp.Regexp, session *Session) (SearchMatch, bool, error) {
+	return searchFileContext(context.Background(), path, matcher, session)
+}
 
+func searchFileContext(ctx context.Context, path string, matcher *regexp.Regexp, session *Session) (SearchMatch, bool, error) {
 	var match SearchMatch
 	found := false
-	err := visitRolloutFile(path, func(rec record) (bool, error) {
+	err := visitRolloutFileContext(ctx, path, func(rec record) (bool, error) {
 		role, text := conversationText(rec)
 		if text == "" {
 			return false, nil
@@ -155,6 +192,9 @@ func searchFile(path string, matcher *regexp.Regexp, session *Session) (SearchMa
 			return false, nil
 		}
 		if session == nil {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
 			parsed, metaErr := ParseFile(path)
 			if metaErr != nil {
 				return false, metaErr

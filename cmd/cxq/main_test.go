@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1005,5 +1006,19 @@ func TestCLIRunnerCompareJSONPreservesBackendEvidence(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestCLIRunnerPropagatesCanceledContext(t *testing.T) {
+	home := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunnerWithContext(ctx, strings.NewReader(""), &stdout, &stderr)
+	err := runner.run([]string{"list", "--home", home})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("list error = %v, want context.Canceled", err)
 	}
 }

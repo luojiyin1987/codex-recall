@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -20,12 +21,17 @@ type ConversationMessage struct {
 // same logical message are collapsed only when they come from different
 // rollout record types (for example event_msg followed by response_item).
 func ReadConversation(path string) ([]ConversationMessage, error) {
+	return ReadConversationContext(context.Background(), path)
+}
+
+// ReadConversationContext is ReadConversation with cooperative cancellation.
+func ReadConversationContext(ctx context.Context, path string) ([]ConversationMessage, error) {
 	messages := make([]ConversationMessage, 0)
 	lastRole := ""
 	lastText := ""
 	lastRecordType := ""
 
-	err := visitRolloutFile(path, func(rec record) (bool, error) {
+	err := visitRolloutFileContext(ctx, path, func(rec record) (bool, error) {
 		role, text := conversationText(rec)
 		text = strings.TrimSpace(text)
 		if role == "" || text == "" {

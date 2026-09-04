@@ -34,7 +34,7 @@ type Result struct {
 // Build incrementally refreshes a derived index from the logical Codex
 // sessions under home. Rollout files remain the source of truth.
 func Build(ctx context.Context, home string, store Store) (Result, error) {
-	sessions, warnings, err := codex.NewCatalog(home).Sessions()
+	sessions, warnings, err := codex.NewCatalog(home).SessionsContext(ctx)
 	result := Result{
 		Discovered: len(sessions),
 		Warnings:   append([]error(nil), warnings...),
@@ -78,7 +78,7 @@ func Build(ctx context.Context, home string, store Store) (Result, error) {
 			return result, err
 		}
 
-		contentHash, err := hashRollout(session.Path)
+		contentHash, err := hashRolloutContext(ctx, session.Path)
 		if err != nil {
 			result.Warnings = append(result.Warnings, fmt.Errorf("%s: hash rollout: %w", session.Path, err))
 			continue
@@ -90,7 +90,7 @@ func Build(ctx context.Context, home string, store Store) (Result, error) {
 			continue
 		}
 
-		conversation, err := codex.ReadConversation(session.Path)
+		conversation, err := codex.ReadConversationContext(ctx, session.Path)
 		if err != nil {
 			result.Warnings = append(result.Warnings, fmt.Errorf("%s: read conversation: %w", session.Path, err))
 			continue
@@ -153,6 +153,13 @@ func Build(ctx context.Context, home string, store Store) (Result, error) {
 }
 
 func hashRollout(path string) (string, error) {
+	return hashRolloutContext(context.Background(), path)
+}
+
+func hashRolloutContext(ctx context.Context, path string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -160,8 +167,20 @@ func hashRollout(path string) (string, error) {
 	defer file.Close()
 
 	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+	if _, err := io.Copy(hash, contextReader{ctx: ctx, reader: file}); err != nil {
 		return "", err
 	}
 	return contentHashVersion + ":sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }

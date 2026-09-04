@@ -1,6 +1,8 @@
 package codex
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -214,5 +216,15 @@ func TestMatchesSessionFilters(t *testing.T) {
 				t.Fatalf("matchesSessionFilters() = %v, want %v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestSearchContextHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := SearchContext(ctx, t.TempDir(), SearchOptions{Query: "needle", Limit: 20})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
 	}
 }
