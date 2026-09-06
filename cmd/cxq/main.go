@@ -96,7 +96,7 @@ func (c cliRunner) runIndex(args []string) error {
 	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
 	dbFlag := flags.String("db", "", "SQLite index path (default: CODEX_HOME/.codex-recall/index.db)")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("index: %w", err)
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("index does not accept positional arguments; usage: cxq index [--home PATH] [--db PATH]")
@@ -136,7 +136,7 @@ func (c cliRunner) runStatus(args []string) error {
 	dbFlag := flags.String("db", "", "SQLite index path (default: CODEX_HOME/.codex-recall/index.db)")
 	jsonFlag := flags.Bool("json", false, "write machine-readable JSON")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("status: %w", err)
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("status does not accept positional arguments; usage: cxq status [--json] [--home PATH] [--db PATH]")
@@ -170,7 +170,7 @@ func (c cliRunner) runList(args []string) error {
 	sourceFlag := flags.String("source", "", "only sessions whose source exactly matches this value")
 	jsonFlag := flags.Bool("json", false, "write machine-readable JSON")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("list: %w", err)
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("list does not accept positional arguments; to search conversation text, use cxq search [OPTIONS] QUERY")
@@ -231,7 +231,7 @@ func (c cliRunner) runSearch(args []string) error {
 	dbFlag := flags.String("db", "", "SQLite index path for --index (default: CODEX_HOME/.codex-recall/index.db)")
 	jsonFlag := flags.Bool("json", false, "write machine-readable JSON")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("search: %w", err)
 	}
 	if flags.NArg() == 0 {
 		return fmt.Errorf("search requires QUERY; to list sessions without a text query, use cxq list [--project PROJECT] [--source SOURCE]")
@@ -326,7 +326,7 @@ func (c cliRunner) runCompare(args []string) error {
 	sourceFlag := flags.String("source", "", "only sessions whose source exactly matches this value")
 	jsonFlag := flags.Bool("json", false, "write machine-readable JSON")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("compare: %w", err)
 	}
 	if flags.NArg() != 1 || strings.TrimSpace(flags.Arg(0)) == "" {
 		return fmt.Errorf("usage: cxq compare [--json] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY")
@@ -406,7 +406,7 @@ func (c cliRunner) runPack(args []string) error {
 	sourceFlag := flags.String("source", "", "only sessions whose source exactly matches this value")
 	jsonFlag := flags.Bool("json", false, "write machine-readable JSON")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("pack: %w", err)
 	}
 	if flags.NArg() != 1 || strings.TrimSpace(flags.Arg(0)) == "" {
 		return fmt.Errorf("usage: cxq pack [--json] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY")
@@ -469,7 +469,7 @@ func (c cliRunner) runShow(args []string) error {
 	flags.SetOutput(c.stderr)
 	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("show: %w", err)
 	}
 	if flags.NArg() != 1 || strings.TrimSpace(flags.Arg(0)) == "" {
 		return fmt.Errorf("usage: cxq show [--home PATH] SESSION")
@@ -518,7 +518,7 @@ func (c cliRunner) runResume(args []string) error {
 	flags.SetOutput(c.stderr)
 	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("resume: %w", err)
 	}
 	if flags.NArg() != 1 || strings.TrimSpace(flags.Arg(0)) == "" {
 		return fmt.Errorf("usage: cxq resume [--home PATH] SESSION")
@@ -542,7 +542,7 @@ func (c cliRunner) runOpen(args []string) error {
 	targetFlag := flags.String("target", "auto", "open target: auto, vscode, or cli")
 	schemeFlag := flags.String("vscode-scheme", "vscode", "VS Code URI scheme: vscode or vscode-insiders")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("open: %w", err)
 	}
 	if flags.NArg() != 1 || strings.TrimSpace(flags.Arg(0)) == "" {
 		return fmt.Errorf("usage: cxq open [--home PATH] [--target TARGET] [--vscode-scheme SCHEME] SESSION")
