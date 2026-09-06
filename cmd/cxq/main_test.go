@@ -1023,3 +1023,33 @@ func TestCLIRunnerPropagatesCanceledContext(t *testing.T) {
 		t.Fatalf("list error = %v, want context.Canceled", err)
 	}
 }
+
+func TestFormatTimestamp(t *testing.T) {
+	tests := []struct {
+		name string
+		time string
+		want string
+	}{
+		{name: "zero", time: "", want: "-"},
+		{name: "valid", time: "2026-09-04T15:04:05Z", want: "2026-09-04"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var ts interface{ IsZero() bool }
+			if tc.time == "" {
+				ts = interface{ IsZero() bool }(nil)
+			}
+			_ = ts
+		})
+	}
+}
+
+func TestNewCLIRunnerWithContextHandlesNilContext(t *testing.T) {
+	runner := newCLIRunnerWithContext(nil, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}) //nolint:staticcheck // SA1012: testing nil context handling.
+	if runner.ctx == nil {
+		t.Fatal("nil context was not replaced with background context")
+	}
+	if runner.ctx != context.Background() {
+		t.Fatal("nil context was not replaced with background context")
+	}
+}

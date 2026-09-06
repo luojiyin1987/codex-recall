@@ -21,6 +21,23 @@ func TestResolveHomeUsesCodexHome(t *testing.T) {
 	}
 }
 
+func TestResolveHomeFallsBackToUserHome(t *testing.T) {
+	t.Setenv(codexHomeEnv, "")
+
+	got, err := ResolveHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ".codex")
+	if got != want {
+		t.Fatalf("ResolveHome() = %q, want %q", got, want)
+	}
+}
+
 func TestDiscoverFilesFindsJSONLRecursively(t *testing.T) {
 	home := t.TempDir()
 	sessions := filepath.Join(home, "sessions", "2026", "08", "12")

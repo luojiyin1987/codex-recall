@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -309,6 +310,120 @@ func TestSQLiteIndexSessionsListsStoredSessions(t *testing.T) {
 	}
 	if sessions[0].ID != "session-a" || sessions[1].ID != "session-b" {
 		t.Fatalf("Sessions() order = %#v", sessions)
+	}
+}
+
+func TestSQLiteIndexDeleteSessionRejectsEmptyID(t *testing.T) {
+	idx := openTestIndex(t)
+	err := idx.DeleteSession(context.Background(), "")
+	if err == nil {
+		t.Fatal("DeleteSession() accepted empty id")
+	}
+}
+
+func TestValidateSessionRejectsEmptyFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		session Session
+		want    string
+	}{
+		{
+			name:    "empty id",
+			session: Session{RolloutPath: "/x.jsonl", ContentHash: "h"},
+			want:    "session id must not be empty",
+		},
+		{
+			name:    "empty rollout path",
+			session: Session{ID: "s1", ContentHash: "h"},
+			want:    "rollout path must not be empty",
+		},
+		{
+			name:    "empty content hash",
+			session: Session{ID: "s1", RolloutPath: "/x.jsonl"},
+			want:    "content hash must not be empty",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateSession(tc.session)
+			if err == nil {
+				t.Fatalf("validateSession() did not error for %s", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %q, want %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateMessagesRejectsInvalidInput(t *testing.T) {
+	tests := []struct {
+		name       string
+		sessionID  string
+		messages   []Message
+		want       string
+	}{
+		{
+			name:      "empty session id",
+			sessionID: "",
+			messages:  []Message{{Ordinal: 0, Role: "user", Text: "hi"}},
+			want:      "session id must not be empty",
+		},
+		{
+			name:      "mismatched session id",
+			sessionID: "s1",
+			messages:  []Message{{SessionID: "s2", Ordinal: 0, Role: "user", Text: "hi"}},
+			want:      "does not match",
+		},
+		{
+			name:      "negative ordinal",
+			sessionID: "s1",
+			messages:  []Message{{Ordinal: -1, Role: "user", Text: "hi"}},
+			want:      "must not be negative",
+		},
+		{
+			name:      "empty role",
+			sessionID: "s1",
+			messages:  []Message{{Ordinal: 0, Role: "", Text: "hi"}},
+			want:      "must not be empty",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateMessages(tc.sessionID, tc.messages)
+			if err == nil {
+				t.Fatalf("validateMessages() did not error for %s", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateMessagesAcceptsValidInput(t *testing.T) {
+	err := validateMessages("s1", []Message{
+		{Ordinal: 0, Role: "user", Text: "hello"},
+		{SessionID: "s1", Ordinal: 1, Role: "assistant", Text: "world"},
+		{Ordinal: 2, Role: "user", Text: "follow-up"},
+	})
+	if err != nil {
+		t.Fatalf("validateMessages() unexpected error: %v", err)
+	}
+}
+
+func TestSQLiteIndexReplaceSessionsRejectsInvalidBatch(t *testing.T) {
+	idx := openTestIndex(t)
+	ctx := context.Background()
+
+	err := idx.ReplaceSessions(ctx, []SessionReplacement{
+		{
+			Session:  Session{},
+			Messages: []Message{{Ordinal: 0, Role: "user", Text: "x"}},
+		},
+	})
+	if err == nil {
+		t.Fatal("ReplaceSessions() accepted empty session")
 	}
 }
 
