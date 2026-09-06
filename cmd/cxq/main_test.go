@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestResolveOpenTarget(t *testing.T) {
@@ -1025,22 +1026,13 @@ func TestCLIRunnerPropagatesCanceledContext(t *testing.T) {
 }
 
 func TestFormatTimestamp(t *testing.T) {
-	tests := []struct {
-		name string
-		time string
-		want string
-	}{
-		{name: "zero", time: "", want: "-"},
-		{name: "valid", time: "2026-09-04T15:04:05Z", want: "2026-09-04"},
+	if got := formatTimestamp(time.Time{}); got != "-" {
+		t.Fatalf("formatTimestamp(zero) = %q, want %q", got, "-")
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			var ts interface{ IsZero() bool }
-			if tc.time == "" {
-				ts = interface{ IsZero() bool }(nil)
-			}
-			_ = ts
-		})
+
+	timestamp := time.Date(2026, time.September, 4, 15, 4, 5, 0, time.Local)
+	if got := formatTimestamp(timestamp); got != "2026-09-04 15:04" {
+		t.Fatalf("formatTimestamp(timestamp) = %q, want %q", got, "2026-09-04 15:04")
 	}
 }
 
