@@ -36,7 +36,7 @@ func DefaultIndexPath(home string) string {
 func Refresh(ctx context.Context, home string, options RefreshOptions) (RefreshResult, error) {
 	home = strings.TrimSpace(home)
 	if home == "" {
-		return RefreshResult{}, errors.New("Codex home must not be empty")
+		return RefreshResult{}, errors.New("codex home must not be empty")
 	}
 
 	databasePath := strings.TrimSpace(options.DatabasePath)

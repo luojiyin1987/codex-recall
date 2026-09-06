@@ -99,7 +99,8 @@ func existingRolloutRoots(home string) []string {
 }
 
 func ripgrepArgs(roots []string, query string) []string {
-	args := []string{
+	args := make([]string, 0, 9+len(roots))
+	args = append(args,
 		"-l",
 		"-0",
 		"--pcre2",
@@ -108,7 +109,7 @@ func ripgrepArgs(roots []string, query string) []string {
 		"--glob", "*.jsonl",
 		"--",
 		conversationCandidatePattern(query),
-	}
+	)
 	return append(args, roots...)
 }
 
