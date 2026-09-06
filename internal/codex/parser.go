@@ -119,7 +119,7 @@ func parseLegacy(r io.Reader, path string) (Session, error) {
 
 		var context turnContext
 		if err := json.Unmarshal(rec.Payload, &context); err != nil {
-			return false, nil
+			return false, nil //nolint:nilerr // Tolerate malformed turn_context records.
 		}
 		if context.CWD != "" {
 			session.CWD = context.CWD

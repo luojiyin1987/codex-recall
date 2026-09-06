@@ -12,10 +12,6 @@ import (
 
 type recordVisitor func(record) (stop bool, err error)
 
-func visitRolloutFile(path string, visit recordVisitor) error {
-	return visitRolloutFileContext(context.Background(), path, visit)
-}
-
 func visitRolloutFileContext(ctx context.Context, path string, visit recordVisitor) error {
 	if err := ctx.Err(); err != nil {
 		return err

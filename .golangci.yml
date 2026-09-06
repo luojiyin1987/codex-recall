@@ -1,0 +1,40 @@
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errorlint
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - durationcheck
+    - exportloopref
+    - makezero
+    - nilerr
+    - prealloc
+    - unconvert
+    - unparam
+    - wastedassign
+
+linters-settings:
+  errorlint:
+    errorf: true
+    asserts: true
+    comparison: true
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment
+      - shadow
+  unconvert:
+    remove-extra-unused: true
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - unparam
+        - prealloc

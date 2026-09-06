@@ -36,10 +36,6 @@ type cliRunner struct {
 	stderr io.Writer
 }
 
-func run(args []string) error {
-	return runContext(context.Background(), args)
-}
-
 func runContext(ctx context.Context, args []string) error {
 	return newCLIRunnerWithContext(ctx, os.Stdin, os.Stdout, os.Stderr).run(args)
 }
@@ -723,7 +719,7 @@ func withWSLTermProgramProbeShim(env []string, lookPath lookPathFunc) ([]string,
 
 	realCmd, err := lookPath("cmd.exe")
 	if err != nil {
-		return env, cleanup, nil
+		return env, cleanup, nil //nolint:nilerr // Graceful fallback when cmd.exe is unavailable.
 	}
 	shimDir, err := os.MkdirTemp("", "cxq-wsl-cmd-")
 	if err != nil {

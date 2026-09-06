@@ -45,13 +45,7 @@ func Pack(ctx context.Context, home string, options PackOptions) (PackResult, er
 		Source:  strings.TrimSpace(options.Source),
 	}
 
-	searchResult, err := Search(ctx, home, SearchOptions{
-		DatabasePath: options.DatabasePath,
-		Query:        options.Query,
-		Limit:        options.Limit,
-		Project:      options.Project,
-		Source:       options.Source,
-	})
+	searchResult, err := Search(ctx, home, SearchOptions(options))
 	result.DatabasePath = searchResult.DatabasePath
 	if err != nil {
 		return result, err

@@ -166,10 +166,6 @@ func compileSearchMatcher(query string) (*regexp.Regexp, error) {
 	return matcher, nil
 }
 
-func searchFile(path string, matcher *regexp.Regexp, session *Session) (SearchMatch, bool, error) {
-	return searchFileContext(context.Background(), path, matcher, session)
-}
-
 func searchFileContext(ctx context.Context, path string, matcher *regexp.Regexp, session *Session) (SearchMatch, bool, error) {
 	var match SearchMatch
 	found := false

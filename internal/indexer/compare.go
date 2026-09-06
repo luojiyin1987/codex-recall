@@ -56,13 +56,7 @@ func Compare(ctx context.Context, home string, options CompareOptions) (CompareR
 		return CompareResult{}, err
 	}
 
-	indexed, err := Search(ctx, home, SearchOptions{
-		DatabasePath: options.DatabasePath,
-		Query:        options.Query,
-		Limit:        options.Limit,
-		Project:      options.Project,
-		Source:       options.Source,
-	})
+	indexed, err := Search(ctx, home, SearchOptions(options))
 	if err != nil {
 		return CompareResult{Warnings: append([]error(nil), live.Warnings...)}, err
 	}
