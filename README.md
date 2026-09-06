@@ -291,6 +291,7 @@ cxq list --home /path/to/.codex
 cxq search --home /path/to/.codex "Promise"
 cxq show --home /path/to/.codex 019fe0cb
 cxq open --home /path/to/.codex 019fe0cb
+cxq resume --home /path/to/.codex 019fe0cb
 ```
 
 Use a custom index database:
