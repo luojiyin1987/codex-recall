@@ -88,15 +88,7 @@ func SearchContext(ctx context.Context, home string, options SearchOptions) (Sea
 }
 
 func matchesSessionFilters(session Session, project, source string) bool {
-	project = strings.TrimSpace(project)
-	source = strings.TrimSpace(source)
-	if project != "" && !strings.EqualFold(session.Project(), project) {
-		return false
-	}
-	if source != "" && !strings.EqualFold(session.Source, source) {
-		return false
-	}
-	return true
+	return session.MatchesFilters(project, source)
 }
 
 // searchFiles scans ordered candidates until it reaches limit.

@@ -16,6 +16,21 @@ type Session struct {
 	Path      string
 }
 
+// MatchesFilters reports whether the session matches the given project and
+// source filters. Both filters are case-insensitive exact-match after
+// trimming whitespace. An empty filter matches everything.
+func (s Session) MatchesFilters(project, source string) bool {
+	project = strings.TrimSpace(project)
+	source = strings.TrimSpace(source)
+	if project != "" && !strings.EqualFold(s.Project(), project) {
+		return false
+	}
+	if source != "" && !strings.EqualFold(s.Source, source) {
+		return false
+	}
+	return true
+}
+
 // Project returns a compact project name derived from the session working
 // directory. Normalize separators first so a Linux/WSL build can also display
 // project names from Windows-authored sessions.

@@ -191,7 +191,7 @@ func (c cliRunner) runList(args []string) error {
 
 	filtered := make([]codex.Session, 0, len(sessions))
 	for _, session := range sessions {
-		if matchesListFilters(session, *projectFlag, *sourceFlag) {
+		if session.MatchesFilters(*projectFlag, *sourceFlag) {
 			filtered = append(filtered, session)
 		}
 	}
@@ -218,18 +218,6 @@ func (c cliRunner) runList(args []string) error {
 		fmt.Fprintf(c.stderr, "cxq: skipped %d unreadable session file(s)\n", len(warnings))
 	}
 	return nil
-}
-
-func matchesListFilters(session codex.Session, project, source string) bool {
-	project = strings.TrimSpace(project)
-	source = strings.TrimSpace(source)
-	if project != "" && !strings.EqualFold(session.Project(), project) {
-		return false
-	}
-	if source != "" && !strings.EqualFold(session.Source, source) {
-		return false
-	}
-	return true
 }
 
 func (c cliRunner) runSearch(args []string) error {
