@@ -118,12 +118,12 @@ func Build(ctx context.Context, home string, store Store) (result Result, return
 		hashStart := time.Now()
 		contentHash, bytesRead, err := hashRolloutContextMeasured(ctx, session.Path)
 		result.Profile.Hash += time.Since(hashStart)
+		result.Profile.HashBytes += bytesRead
 		if err != nil {
 			result.Warnings = append(result.Warnings, fmt.Errorf("%s: hash rollout: %w", session.Path, err))
 			continue
 		}
 		result.Profile.FilesHashed++
-		result.Profile.HashBytes += bytesRead
 
 		current, found := indexedByID[session.ID]
 		if found && current.ContentHash == contentHash && current.RolloutPath == session.Path {
@@ -134,12 +134,12 @@ func Build(ctx context.Context, home string, store Store) (result Result, return
 		conversationStart := time.Now()
 		conversation, conversationBytes, err := codex.ReadConversationContextMeasured(ctx, session.Path)
 		result.Profile.ConversationDecode += time.Since(conversationStart)
+		result.Profile.ConversationBytes += conversationBytes
 		if err != nil {
 			result.Warnings = append(result.Warnings, fmt.Errorf("%s: read conversation: %w", session.Path, err))
 			continue
 		}
 		result.Profile.FilesDecoded++
-		result.Profile.ConversationBytes += conversationBytes
 		result.Profile.MessagesDecoded += len(conversation)
 
 		indexedMessages := make([]index.Message, 0, len(conversation))

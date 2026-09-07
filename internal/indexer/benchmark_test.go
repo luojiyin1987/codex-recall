@@ -26,6 +26,10 @@ type refreshBenchmarkTotals struct {
 	hashBytes          int64
 	filesDecoded       int
 	messagesDecoded    int
+	rolloutFiles       int
+	metadataUnreadable int
+	conversationBytes  int64
+	batchesWritten     int
 }
 
 func (t *refreshBenchmarkTotals) add(profile RefreshProfile) {
@@ -44,6 +48,10 @@ func (t *refreshBenchmarkTotals) add(profile RefreshProfile) {
 	t.hashBytes += profile.Build.HashBytes
 	t.filesDecoded += profile.Build.FilesDecoded
 	t.messagesDecoded += profile.Build.MessagesDecoded
+	t.rolloutFiles += profile.Build.RolloutFiles
+	t.metadataUnreadable += profile.Build.MetadataUnreadableFiles
+	t.conversationBytes += profile.Build.ConversationBytes
+	t.batchesWritten += profile.Build.BatchesWritten
 }
 
 func (t refreshBenchmarkTotals) report(b *testing.B) {
@@ -64,6 +72,10 @@ func (t refreshBenchmarkTotals) report(b *testing.B) {
 	b.ReportMetric(float64(t.hashBytes)/iterations, "hash-bytes/op")
 	b.ReportMetric(float64(t.filesDecoded)/iterations, "files-decoded/op")
 	b.ReportMetric(float64(t.messagesDecoded)/iterations, "messages-decoded/op")
+	b.ReportMetric(float64(t.rolloutFiles)/iterations, "rollout-files/op")
+	b.ReportMetric(float64(t.metadataUnreadable)/iterations, "metadata-unreadable-files/op")
+	b.ReportMetric(float64(t.conversationBytes)/iterations, "conversation-bytes/op")
+	b.ReportMetric(float64(t.batchesWritten)/iterations, "batches-written/op")
 }
 
 func BenchmarkIndexInitialBuild(b *testing.B) {
