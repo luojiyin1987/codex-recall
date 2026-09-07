@@ -14,8 +14,9 @@ const sqliteDriverName = "sqlite"
 
 const upsertSessionSQL = `
 INSERT INTO sessions (
-    session_id, timestamp, cwd, project, source, rollout_path, content_hash, indexed_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    session_id, timestamp, cwd, project, source, rollout_path, content_hash,
+    rollout_size, rollout_mtime_ns, indexed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(session_id) DO UPDATE SET
     timestamp = excluded.timestamp,
     cwd = excluded.cwd,
@@ -23,6 +24,8 @@ ON CONFLICT(session_id) DO UPDATE SET
     source = excluded.source,
     rollout_path = excluded.rollout_path,
     content_hash = excluded.content_hash,
+    rollout_size = excluded.rollout_size,
+    rollout_mtime_ns = excluded.rollout_mtime_ns,
     indexed_at = excluded.indexed_at
 `
 
@@ -101,6 +104,41 @@ func (s *SQLiteIndex) UpsertSession(ctx context.Context, session Session) error 
 	}
 	if err := execUpsertSession(ctx, s.db, session); err != nil {
 		return fmt.Errorf("upsert indexed session %q: %w", session.ID, err)
+	}
+	return nil
+}
+
+// UpsertSessions writes session metadata in one bounded transaction.
+func (s *SQLiteIndex) UpsertSessions(ctx context.Context, sessions []Session) error {
+	if len(sessions) == 0 {
+		return nil
+	}
+	for _, session := range sessions {
+		if err := validateSession(session); err != nil {
+			return err
+		}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin indexed session batch upsert: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	stmt, err := tx.PrepareContext(ctx, upsertSessionSQL)
+	if err != nil {
+		return fmt.Errorf("prepare indexed session batch upsert: %w", err)
+	}
+	defer stmt.Close()
+	for _, session := range sessions {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := execPreparedUpsertSession(ctx, stmt, session); err != nil {
+			return fmt.Errorf("upsert indexed session %q: %w", session.ID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit indexed session batch upsert: %w", err)
 	}
 	return nil
 }
@@ -229,6 +267,8 @@ func execUpsertSession(ctx context.Context, execer sqlExecer, session Session) e
 		session.Source,
 		session.RolloutPath,
 		session.ContentHash,
+		session.RolloutSize,
+		session.RolloutMTimeNS,
 		formatTime(time.Now().UTC()),
 	)
 	return err
@@ -243,6 +283,8 @@ func execPreparedUpsertSession(ctx context.Context, stmt *sql.Stmt, session Sess
 		session.Source,
 		session.RolloutPath,
 		session.ContentHash,
+		session.RolloutSize,
+		session.RolloutMTimeNS,
 		formatTime(time.Now().UTC()),
 	)
 	return err
@@ -356,7 +398,8 @@ func validateMessages(sessionID string, messages []Message) error {
 
 func (s *SQLiteIndex) Sessions(ctx context.Context) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT session_id, timestamp, cwd, project, source, rollout_path, content_hash
+SELECT session_id, timestamp, cwd, project, source, rollout_path, content_hash,
+       rollout_size, rollout_mtime_ns
 FROM sessions
 ORDER BY session_id
 `)
@@ -377,6 +420,8 @@ ORDER BY session_id
 			&session.Source,
 			&session.RolloutPath,
 			&session.ContentHash,
+			&session.RolloutSize,
+			&session.RolloutMTimeNS,
 		); err != nil {
 			return nil, fmt.Errorf("scan indexed session: %w", err)
 		}
@@ -423,7 +468,8 @@ func (s *SQLiteIndex) Session(ctx context.Context, id string) (Session, bool, er
 	var timestamp string
 
 	err := s.db.QueryRowContext(ctx, `
-SELECT session_id, timestamp, cwd, project, source, rollout_path, content_hash
+SELECT session_id, timestamp, cwd, project, source, rollout_path, content_hash,
+       rollout_size, rollout_mtime_ns
 FROM sessions
 WHERE session_id = ?
 `, id).Scan(
@@ -434,6 +480,8 @@ WHERE session_id = ?
 		&session.Source,
 		&session.RolloutPath,
 		&session.ContentHash,
+		&session.RolloutSize,
+		&session.RolloutMTimeNS,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Session{}, false, nil

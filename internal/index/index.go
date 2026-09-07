@@ -7,13 +7,15 @@ import (
 
 // Session is the stable metadata stored in the derived local index.
 type Session struct {
-	ID          string
-	Timestamp   time.Time
-	CWD         string
-	Project     string
-	Source      string
-	RolloutPath string
-	ContentHash string
+	ID             string
+	Timestamp      time.Time
+	CWD            string
+	Project        string
+	Source         string
+	RolloutPath    string
+	ContentHash    string
+	RolloutSize    int64
+	RolloutMTimeNS int64
 }
 
 // Message is one searchable conversation message in a session.

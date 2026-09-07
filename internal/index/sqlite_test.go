@@ -39,13 +39,15 @@ func TestSQLiteIndexUpsertSession(t *testing.T) {
 	when := time.Date(2026, 9, 4, 3, 0, 0, 123, time.UTC)
 
 	session := Session{
-		ID:          "session-1",
-		Timestamp:   when,
-		CWD:         "/work/旧项目",
-		Project:     "旧项目",
-		Source:      "vscode",
-		RolloutPath: "/codex/session-1.jsonl",
-		ContentHash: "hash-1",
+		ID:             "session-1",
+		Timestamp:      when,
+		CWD:            "/work/旧项目",
+		Project:        "旧项目",
+		Source:         "vscode",
+		RolloutPath:    "/codex/session-1.jsonl",
+		ContentHash:    "hash-1",
+		RolloutSize:    1234,
+		RolloutMTimeNS: 5678,
 	}
 	if err := idx.UpsertSession(ctx, session); err != nil {
 		t.Fatal(err)
@@ -68,6 +70,9 @@ func TestSQLiteIndexUpsertSession(t *testing.T) {
 	if got.Project != "新项目" || got.Source != "cli" || got.ContentHash != "hash-2" {
 		t.Fatalf("Session() = %#v", got)
 	}
+	if got.RolloutSize != 1234 || got.RolloutMTimeNS != 5678 {
+		t.Fatalf("Session() fingerprint = %#v", got)
+	}
 	if !got.Timestamp.Equal(when) {
 		t.Fatalf("Timestamp = %v, want %v", got.Timestamp, when)
 	}
@@ -78,6 +83,47 @@ func TestSQLiteIndexUpsertSession(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("session row count = %d, want 1", count)
+	}
+}
+
+func TestSQLiteIndexUpsertSessions(t *testing.T) {
+	idx := openTestIndex(t)
+	ctx := context.Background()
+	when := time.Date(2026, 9, 7, 4, 0, 0, 0, time.UTC)
+	sessions := []Session{
+		{
+			ID:             "session-1",
+			Timestamp:      when,
+			RolloutPath:    "/codex/session-1.jsonl",
+			ContentHash:    "hash-1",
+			RolloutSize:    100,
+			RolloutMTimeNS: 1000,
+		},
+		{
+			ID:             "session-2",
+			Timestamp:      when.Add(time.Second),
+			RolloutPath:    "/codex/session-2.jsonl",
+			ContentHash:    "hash-2",
+			RolloutSize:    200,
+			RolloutMTimeNS: 2000,
+		},
+	}
+
+	if err := idx.UpsertSessions(ctx, sessions); err != nil {
+		t.Fatal(err)
+	}
+	got, err := idx.Sessions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("sessions = %#v", got)
+	}
+	if got[0].RolloutSize != 100 || got[0].RolloutMTimeNS != 1000 {
+		t.Fatalf("first fingerprint = %#v", got[0])
+	}
+	if got[1].RolloutSize != 200 || got[1].RolloutMTimeNS != 2000 {
+		t.Fatalf("second fingerprint = %#v", got[1])
 	}
 }
 
@@ -209,7 +255,6 @@ func assertTableExists(t *testing.T, db *sql.DB, table string) {
 	}
 }
 
-
 func TestSQLiteIndexReplaceSessionCommitsMetadataAndMessagesTogether(t *testing.T) {
 	idx := openTestIndex(t)
 	ctx := context.Background()
@@ -294,7 +339,6 @@ func TestSQLiteIndexReplaceSessionRollsBackHashWhenMessageInsertFails(t *testing
 	}
 }
 
-
 func TestSQLiteIndexSessionsListsStoredSessions(t *testing.T) {
 	idx := openTestIndex(t)
 	ctx := context.Background()
@@ -358,10 +402,10 @@ func TestValidateSessionRejectsEmptyFields(t *testing.T) {
 
 func TestValidateMessagesRejectsInvalidInput(t *testing.T) {
 	tests := []struct {
-		name       string
-		sessionID  string
-		messages   []Message
-		want       string
+		name      string
+		sessionID string
+		messages  []Message
+		want      string
 	}{
 		{
 			name:      "empty session id",

@@ -7,18 +7,21 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/luojiyin1987/codex-recall/internal/index"
 )
 
 type fakeStore struct {
-	sessions     map[string]index.Session
-	messages     map[string][]index.Message
-	replacements int
-	batchCalls   int
-	batchSizes   []int
-	deletions    int
-	listCalls    int
+	sessions           map[string]index.Session
+	messages           map[string][]index.Message
+	replacements       int
+	batchCalls         int
+	batchSizes         []int
+	deletions          int
+	listCalls          int
+	metadataUpdates    int
+	metadataBatchCalls int
 }
 
 func newFakeStore() *fakeStore {
@@ -41,6 +44,15 @@ func (f *fakeStore) DeleteSession(_ context.Context, id string) error {
 	delete(f.sessions, id)
 	delete(f.messages, id)
 	f.deletions++
+	return nil
+}
+
+func (f *fakeStore) UpsertSessions(_ context.Context, sessions []index.Session) error {
+	f.metadataBatchCalls++
+	for _, session := range sessions {
+		f.sessions[session.ID] = session
+		f.metadataUpdates++
+	}
 	return nil
 }
 
@@ -118,11 +130,97 @@ func TestBuildSkipsUnchangedContent(t *testing.T) {
 	if store.replacements != 1 {
 		t.Fatalf("replacements = %d, want 1", store.replacements)
 	}
-	if second.Profile.FilesHashed != 1 || second.Profile.HashBytes == 0 {
+	if second.Profile.FilesHashed != 0 || second.Profile.HashBytes != 0 {
 		t.Fatalf("unchanged profile = %#v", second.Profile)
+	}
+	if second.Profile.FingerprintFastPaths != 1 || second.Profile.FilesFingerprinted != 1 {
+		t.Fatalf("unchanged fingerprint profile = %#v", second.Profile)
 	}
 	if second.Profile.FilesDecoded != 0 || second.Profile.MessagesDecoded != 0 || second.Profile.BatchesWritten != 0 {
 		t.Fatalf("unchanged profile reported decode or write work: %#v", second.Profile)
+	}
+}
+
+func TestBuildFullHashDetectsRewriteWithMatchingFingerprint(t *testing.T) {
+	home := t.TempDir()
+	path := writeRollout(t, home, "session-1", "hello", "hello back")
+	store := newFakeStore()
+
+	if _, err := Build(context.Background(), home, store); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten := strings.Replace(string(data), `"text":"hello"`, `"text":"jello"`, 1)
+	if rewritten == string(data) || len(rewritten) != len(data) {
+		t.Fatal("test rewrite did not preserve the rollout size")
+	}
+	if err := os.WriteFile(path, []byte(rewritten), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	fastResult, err := Build(context.Background(), home, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fastResult.Profile.FilesHashed != 0 || fastResult.Profile.FingerprintFastPaths != 1 {
+		t.Fatalf("default Build() profile = %#v", fastResult.Profile)
+	}
+	if got := store.messages["session-1"][0].Text; got != "hello" {
+		t.Fatalf("message after default Build() = %q, want hello", got)
+	}
+
+	verified, err := BuildWithOptions(context.Background(), home, store, BuildOptions{FullHash: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified.Indexed != 1 || verified.Profile.FilesHashed != 1 || verified.Profile.FilesDecoded != 1 {
+		t.Fatalf("verified Build() = %#v", verified)
+	}
+	if got := store.messages["session-1"][0].Text; got != "jello" {
+		t.Fatalf("message after verified Build() = %q, want jello", got)
+	}
+}
+
+func TestBuildUpdatesFingerprintWhenContentHashIsUnchanged(t *testing.T) {
+	home := t.TempDir()
+	path := writeRollout(t, home, "session-1", "hello", "hello back")
+	store := newFakeStore()
+
+	if _, err := Build(context.Background(), home, store); err != nil {
+		t.Fatal(err)
+	}
+	first := store.sessions["session-1"]
+	changedTime := time.Unix(0, first.RolloutMTimeNS).Add(time.Second)
+	if err := os.Chtimes(path, changedTime, changedTime); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Build(context.Background(), home, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Indexed != 0 || result.Skipped != 1 {
+		t.Fatalf("Build() = %#v", result)
+	}
+	if result.Profile.FilesHashed != 1 || result.Profile.FilesDecoded != 0 {
+		t.Fatalf("same-content profile = %#v", result.Profile)
+	}
+	if result.Profile.FingerprintUpdates != 1 || store.metadataUpdates != 1 || store.metadataBatchCalls != 1 {
+		t.Fatalf("fingerprint update = %#v, metadata updates = %d", result.Profile, store.metadataUpdates)
+	}
+	updated := store.sessions["session-1"]
+	if updated.ContentHash != first.ContentHash || updated.RolloutMTimeNS == first.RolloutMTimeNS {
+		t.Fatalf("updated session = %#v, first = %#v", updated, first)
 	}
 }
 
@@ -347,5 +445,47 @@ func TestBuildWritesSessionsInBoundedBatches(t *testing.T) {
 	}
 	if store.listCalls != 1 {
 		t.Fatalf("listCalls = %d, want 1", store.listCalls)
+	}
+}
+
+func TestBuildWritesFingerprintUpdatesInBoundedBatches(t *testing.T) {
+	home := t.TempDir()
+	paths := make([]string, 0, indexWriteBatchSize+1)
+	for i := 0; i < indexWriteBatchSize+1; i++ {
+		id := fmt.Sprintf("session-%03d", i)
+		paths = append(paths, writeRollout(t, home, id, "hello", "world"))
+	}
+	store := newFakeStore()
+	if _, err := Build(context.Background(), home, store); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		changedTime := info.ModTime().Add(2 * time.Second)
+		if err := os.Chtimes(path, changedTime, changedTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store.metadataBatchCalls = 0
+	store.metadataUpdates = 0
+
+	result, err := Build(context.Background(), home, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Indexed != 0 || result.Skipped != indexWriteBatchSize+1 {
+		t.Fatalf("Build() = %#v", result)
+	}
+	if store.metadataBatchCalls != 2 || store.metadataUpdates != indexWriteBatchSize+1 {
+		t.Fatalf("metadata batch calls = %d, updates = %d", store.metadataBatchCalls, store.metadataUpdates)
+	}
+	if result.Profile.FingerprintBatchesWritten != 2 || result.Profile.FingerprintUpdates != indexWriteBatchSize+1 {
+		t.Fatalf("fingerprint profile = %#v", result.Profile)
+	}
+	if result.Profile.FilesDecoded != 0 {
+		t.Fatalf("fingerprint update decoded files: %#v", result.Profile)
 	}
 }

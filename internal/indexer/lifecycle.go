@@ -19,6 +19,7 @@ const (
 
 type RefreshOptions struct {
 	DatabasePath string
+	FullHash     bool
 }
 
 type RefreshResult struct {
@@ -71,7 +72,7 @@ func Refresh(ctx context.Context, home string, options RefreshOptions) (RefreshR
 		return RefreshResult{DatabasePath: databasePath, Profile: RefreshProfile{Prepare: prepareDuration, DatabaseOpen: openDuration, Total: time.Since(totalStart)}}, fmt.Errorf("open derived index: %w", err)
 	}
 
-	buildResult, buildErr := Build(ctx, home, store)
+	buildResult, buildErr := BuildWithOptions(ctx, home, store, BuildOptions{FullHash: options.FullHash})
 	closeStart := time.Now()
 	closeErr := store.Close()
 	closeDuration := time.Since(closeStart)

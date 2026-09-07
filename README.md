@@ -205,6 +205,17 @@ updated derived index
 
 A clean refresh also removes stale derived sessions when their source rollouts no longer exist. If discovery or parsing reports warnings, stale deletion is skipped for that refresh to avoid destructive reconciliation from uncertain source data.
 
+An unchanged refresh compares the rollout size and modification time first.
+Matching fingerprints skip SHA256 and conversation decoding.
+Changed fingerprints still use SHA256 before the index replaces messages.
+This fast path treats Codex rollout files as append-only data.
+
+Force SHA256 verification when the append-only assumption is uncertain:
+
+```bash
+cxq index --full-hash
+```
+
 ### Compare live and indexed search
 
 Use the same query against both backends:

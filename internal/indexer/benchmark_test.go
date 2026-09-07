@@ -11,25 +11,30 @@ import (
 )
 
 type refreshBenchmarkTotals struct {
-	prepare            time.Duration
-	databaseOpen       time.Duration
-	discovery          time.Duration
-	metadataParse      time.Duration
-	catalogFinalize    time.Duration
-	indexStateRead     time.Duration
-	hash               time.Duration
-	conversationDecode time.Duration
-	databaseWrite      time.Duration
-	staleCleanup       time.Duration
-	databaseClose      time.Duration
-	filesHashed        int
-	hashBytes          int64
-	filesDecoded       int
-	messagesDecoded    int
-	rolloutFiles       int
-	metadataUnreadable int
-	conversationBytes  int64
-	batchesWritten     int
+	prepare                   time.Duration
+	databaseOpen              time.Duration
+	discovery                 time.Duration
+	metadataParse             time.Duration
+	catalogFinalize           time.Duration
+	indexStateRead            time.Duration
+	fingerprint               time.Duration
+	hash                      time.Duration
+	conversationDecode        time.Duration
+	databaseWrite             time.Duration
+	staleCleanup              time.Duration
+	databaseClose             time.Duration
+	filesHashed               int
+	hashBytes                 int64
+	filesDecoded              int
+	messagesDecoded           int
+	rolloutFiles              int
+	metadataUnreadable        int
+	conversationBytes         int64
+	batchesWritten            int
+	filesFingerprinted        int
+	fingerprintFastPaths      int
+	fingerprintUpdates        int
+	fingerprintBatchesWritten int
 }
 
 func (t *refreshBenchmarkTotals) add(profile RefreshProfile) {
@@ -39,6 +44,7 @@ func (t *refreshBenchmarkTotals) add(profile RefreshProfile) {
 	t.metadataParse += profile.Build.MetadataParse
 	t.catalogFinalize += profile.Build.CatalogFinalize
 	t.indexStateRead += profile.Build.IndexStateRead
+	t.fingerprint += profile.Build.Fingerprint
 	t.hash += profile.Build.Hash
 	t.conversationDecode += profile.Build.ConversationDecode
 	t.databaseWrite += profile.Build.DatabaseWrite
@@ -52,6 +58,10 @@ func (t *refreshBenchmarkTotals) add(profile RefreshProfile) {
 	t.metadataUnreadable += profile.Build.MetadataUnreadableFiles
 	t.conversationBytes += profile.Build.ConversationBytes
 	t.batchesWritten += profile.Build.BatchesWritten
+	t.filesFingerprinted += profile.Build.FilesFingerprinted
+	t.fingerprintFastPaths += profile.Build.FingerprintFastPaths
+	t.fingerprintUpdates += profile.Build.FingerprintUpdates
+	t.fingerprintBatchesWritten += profile.Build.FingerprintBatchesWritten
 }
 
 func (t refreshBenchmarkTotals) report(b *testing.B) {
@@ -63,6 +73,7 @@ func (t refreshBenchmarkTotals) report(b *testing.B) {
 	b.ReportMetric(float64(t.metadataParse.Nanoseconds())/iterations, "metadata-ns/op")
 	b.ReportMetric(float64(t.catalogFinalize.Nanoseconds())/iterations, "catalog-finalize-ns/op")
 	b.ReportMetric(float64(t.indexStateRead.Nanoseconds())/iterations, "index-read-ns/op")
+	b.ReportMetric(float64(t.fingerprint.Nanoseconds())/iterations, "fingerprint-ns/op")
 	b.ReportMetric(float64(t.hash.Nanoseconds())/iterations, "hash-ns/op")
 	b.ReportMetric(float64(t.conversationDecode.Nanoseconds())/iterations, "decode-ns/op")
 	b.ReportMetric(float64(t.databaseWrite.Nanoseconds())/iterations, "db-write-ns/op")
@@ -76,6 +87,10 @@ func (t refreshBenchmarkTotals) report(b *testing.B) {
 	b.ReportMetric(float64(t.metadataUnreadable)/iterations, "metadata-unreadable-files/op")
 	b.ReportMetric(float64(t.conversationBytes)/iterations, "conversation-bytes/op")
 	b.ReportMetric(float64(t.batchesWritten)/iterations, "batches-written/op")
+	b.ReportMetric(float64(t.filesFingerprinted)/iterations, "files-fingerprinted/op")
+	b.ReportMetric(float64(t.fingerprintFastPaths)/iterations, "fingerprint-fast-paths/op")
+	b.ReportMetric(float64(t.fingerprintUpdates)/iterations, "fingerprint-updates/op")
+	b.ReportMetric(float64(t.fingerprintBatchesWritten)/iterations, "fingerprint-batches-written/op")
 }
 
 func BenchmarkIndexInitialBuild(b *testing.B) {
