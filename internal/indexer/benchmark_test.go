@@ -15,7 +15,7 @@ type refreshBenchmarkTotals struct {
 	databaseOpen       time.Duration
 	discovery          time.Duration
 	metadataParse      time.Duration
-	catalog            time.Duration
+	catalogFinalize    time.Duration
 	indexStateRead     time.Duration
 	hash               time.Duration
 	conversationDecode time.Duration
@@ -33,7 +33,7 @@ func (t *refreshBenchmarkTotals) add(profile RefreshProfile) {
 	t.databaseOpen += profile.DatabaseOpen
 	t.discovery += profile.Build.Discovery
 	t.metadataParse += profile.Build.MetadataParse
-	t.catalog += profile.Build.Catalog
+	t.catalogFinalize += profile.Build.CatalogFinalize
 	t.indexStateRead += profile.Build.IndexStateRead
 	t.hash += profile.Build.Hash
 	t.conversationDecode += profile.Build.ConversationDecode
@@ -53,7 +53,7 @@ func (t refreshBenchmarkTotals) report(b *testing.B) {
 	b.ReportMetric(float64(t.databaseOpen.Nanoseconds())/iterations, "db-open-ns/op")
 	b.ReportMetric(float64(t.discovery.Nanoseconds())/iterations, "discovery-ns/op")
 	b.ReportMetric(float64(t.metadataParse.Nanoseconds())/iterations, "metadata-ns/op")
-	b.ReportMetric(float64(t.catalog.Nanoseconds())/iterations, "catalog-ns/op")
+	b.ReportMetric(float64(t.catalogFinalize.Nanoseconds())/iterations, "catalog-finalize-ns/op")
 	b.ReportMetric(float64(t.indexStateRead.Nanoseconds())/iterations, "index-read-ns/op")
 	b.ReportMetric(float64(t.hash.Nanoseconds())/iterations, "hash-ns/op")
 	b.ReportMetric(float64(t.conversationDecode.Nanoseconds())/iterations, "decode-ns/op")

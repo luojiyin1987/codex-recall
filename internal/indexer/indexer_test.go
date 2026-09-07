@@ -172,7 +172,7 @@ func TestBuildReindexesChangedContent(t *testing.T) {
 	if result.Profile.MessagesDecoded != 3 || result.Profile.BatchesWritten != 1 {
 		t.Fatalf("changed profile work counts = %#v", result.Profile)
 	}
-	if result.Profile.HashBytes == 0 || result.Profile.ConversationSourceBytes != result.Profile.HashBytes {
+	if result.Profile.HashBytes == 0 || result.Profile.ConversationBytes != result.Profile.HashBytes {
 		t.Fatalf("changed profile byte counts = %#v", result.Profile)
 	}
 	if result.Profile.Total == 0 {

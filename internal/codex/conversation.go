@@ -26,12 +26,18 @@ func ReadConversation(path string) ([]ConversationMessage, error) {
 
 // ReadConversationContext is ReadConversation with cooperative cancellation.
 func ReadConversationContext(ctx context.Context, path string) ([]ConversationMessage, error) {
+	messages, _, err := ReadConversationContextMeasured(ctx, path)
+	return messages, err
+}
+
+// ReadConversationContextMeasured also returns bytes read by the decoder.
+func ReadConversationContextMeasured(ctx context.Context, path string) ([]ConversationMessage, int64, error) {
 	messages := make([]ConversationMessage, 0)
 	lastRole := ""
 	lastText := ""
 	lastRecordType := ""
 
-	err := visitRolloutFileContext(ctx, path, func(rec record) (bool, error) {
+	bytesRead, err := visitRolloutFileContextMeasured(ctx, path, func(rec record) (bool, error) {
 		role, text := conversationText(rec)
 		text = strings.TrimSpace(text)
 		if role == "" || text == "" {
@@ -49,7 +55,7 @@ func ReadConversationContext(ctx context.Context, path string) ([]ConversationMe
 		return false, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, bytesRead, err
 	}
-	return messages, nil
+	return messages, bytesRead, nil
 }

@@ -35,24 +35,23 @@ type Result struct {
 
 // BuildProfile records work performed during one derived-index build.
 type BuildProfile struct {
-	Discovery          time.Duration
-	MetadataParse      time.Duration
-	Catalog            time.Duration
-	IndexStateRead     time.Duration
-	Hash               time.Duration
-	ConversationDecode time.Duration
-	DatabaseWrite      time.Duration
-	StaleCleanup       time.Duration
-	Total              time.Duration
-	FilesHashed        int
-	HashBytes          int64
-	FilesDecoded       int
-	// ConversationSourceBytes is the hashed size of files sent to the decoder.
-	ConversationSourceBytes int64
+	Discovery               time.Duration
+	MetadataParse           time.Duration
+	CatalogFinalize         time.Duration
+	IndexStateRead          time.Duration
+	Hash                    time.Duration
+	ConversationDecode      time.Duration
+	DatabaseWrite           time.Duration
+	StaleCleanup            time.Duration
+	Total                   time.Duration
+	FilesHashed             int
+	HashBytes               int64
+	FilesDecoded            int
+	ConversationBytes       int64
 	MessagesDecoded         int
 	BatchesWritten          int
 	RolloutFiles            int
-	UnreadableFiles         int
+	MetadataUnreadableFiles int
 }
 
 // Build incrementally refreshes a derived index from the logical Codex
@@ -66,9 +65,9 @@ func Build(ctx context.Context, home string, store Store) (result Result, return
 	sessions, warnings, catalogProfile, err := codex.NewCatalog(home).SessionsWithProfileContext(ctx)
 	result.Profile.Discovery = catalogProfile.Discovery
 	result.Profile.MetadataParse = catalogProfile.MetadataParse
-	result.Profile.Catalog = catalogProfile.Total
+	result.Profile.CatalogFinalize = catalogProfile.Finalize
 	result.Profile.RolloutFiles = catalogProfile.FilesDiscovered
-	result.Profile.UnreadableFiles = catalogProfile.FilesUnreadable
+	result.Profile.MetadataUnreadableFiles = catalogProfile.MetadataUnreadableFiles
 	result.Discovered = len(sessions)
 	result.Warnings = append([]error(nil), warnings...)
 	if err != nil {
@@ -133,14 +132,14 @@ func Build(ctx context.Context, home string, store Store) (result Result, return
 		}
 
 		conversationStart := time.Now()
-		conversation, err := codex.ReadConversationContext(ctx, session.Path)
+		conversation, conversationBytes, err := codex.ReadConversationContextMeasured(ctx, session.Path)
 		result.Profile.ConversationDecode += time.Since(conversationStart)
 		if err != nil {
 			result.Warnings = append(result.Warnings, fmt.Errorf("%s: read conversation: %w", session.Path, err))
 			continue
 		}
 		result.Profile.FilesDecoded++
-		result.Profile.ConversationSourceBytes += bytesRead
+		result.Profile.ConversationBytes += conversationBytes
 		result.Profile.MessagesDecoded += len(conversation)
 
 		indexedMessages := make([]index.Message, 0, len(conversation))
