@@ -47,6 +47,19 @@ type SearchMatch struct {
 	Why     string
 }
 
+// SearchProfile captures lightweight timing and cardinality evidence for one
+// indexed search. QuerySetup covers the database QueryContext call; ResultScan
+// covers row iteration and result assembly excluding snippet formatting.
+type SearchProfile struct {
+	Backend          string
+	QuerySetup       time.Duration
+	ResultScan       time.Duration
+	Snippet          time.Duration
+	SearchTotal      time.Duration
+	RowsScanned      int
+	SessionsReturned int
+}
+
 // Index stores disposable, derived data built from Codex rollout files.
 // Codex rollout files remain the source of truth.
 type Index interface {
