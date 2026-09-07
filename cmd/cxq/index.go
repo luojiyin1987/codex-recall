@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"text/tabwriter"
 
 	"github.com/luojiyin1987/codex-recall/internal/indexer"
@@ -13,11 +14,12 @@ func (c cliRunner) runIndex(args []string) error {
 	flags.SetOutput(c.stderr)
 	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
 	dbFlag := flags.String("db", "", "SQLite index path (default: CODEX_HOME/.codex-recall/index.db)")
+	profileFlag := flags.Bool("profile", false, "show index refresh timing profile on stderr")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("index: %w", err)
 	}
 	if flags.NArg() != 0 {
-		return fmt.Errorf("index does not accept positional arguments; usage: cxq index [--home PATH] [--db PATH]")
+		return fmt.Errorf("index does not accept positional arguments; usage: cxq index [--profile] [--home PATH] [--db PATH]")
 	}
 
 	home, err := resolveHome(*homeFlag)
@@ -44,7 +46,37 @@ func (c cliRunner) runIndex(args []string) error {
 	if len(result.Warnings) > 0 {
 		fmt.Fprintf(c.stderr, "cxq: index refresh completed with %d warning(s)\n", len(result.Warnings))
 	}
+	if *profileFlag {
+		return writeIndexRefreshProfile(c.stderr, result.Profile)
+	}
 	return nil
+}
+
+func writeIndexRefreshProfile(w io.Writer, profile indexer.RefreshProfile) error {
+	writer := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(writer, "INDEX_PROFILE")
+	fmt.Fprintf(writer, "PREPARE\t%s\n", profile.Prepare)
+	fmt.Fprintf(writer, "DATABASE_OPEN\t%s\n", profile.DatabaseOpen)
+	fmt.Fprintf(writer, "DISCOVERY\t%s\n", profile.Build.Discovery)
+	fmt.Fprintf(writer, "METADATA_PARSE\t%s\n", profile.Build.MetadataParse)
+	fmt.Fprintf(writer, "CATALOG\t%s\n", profile.Build.Catalog)
+	fmt.Fprintf(writer, "INDEX_STATE_READ\t%s\n", profile.Build.IndexStateRead)
+	fmt.Fprintf(writer, "HASH\t%s\n", profile.Build.Hash)
+	fmt.Fprintf(writer, "CONVERSATION_DECODE\t%s\n", profile.Build.ConversationDecode)
+	fmt.Fprintf(writer, "DATABASE_WRITE\t%s\n", profile.Build.DatabaseWrite)
+	fmt.Fprintf(writer, "STALE_CLEANUP\t%s\n", profile.Build.StaleCleanup)
+	fmt.Fprintf(writer, "BUILD\t%s\n", profile.Build.Total)
+	fmt.Fprintf(writer, "DATABASE_CLOSE\t%s\n", profile.DatabaseClose)
+	fmt.Fprintf(writer, "TOTAL\t%s\n", profile.Total)
+	fmt.Fprintf(writer, "ROLLOUT_FILES\t%d\n", profile.Build.RolloutFiles)
+	fmt.Fprintf(writer, "UNREADABLE_FILES\t%d\n", profile.Build.UnreadableFiles)
+	fmt.Fprintf(writer, "FILES_HASHED\t%d\n", profile.Build.FilesHashed)
+	fmt.Fprintf(writer, "HASH_BYTES\t%d\n", profile.Build.HashBytes)
+	fmt.Fprintf(writer, "FILES_DECODED\t%d\n", profile.Build.FilesDecoded)
+	fmt.Fprintf(writer, "CONVERSATION_SOURCE_BYTES\t%d\n", profile.Build.ConversationSourceBytes)
+	fmt.Fprintf(writer, "MESSAGES_DECODED\t%d\n", profile.Build.MessagesDecoded)
+	fmt.Fprintf(writer, "BATCHES_WRITTEN\t%d\n", profile.Build.BatchesWritten)
+	return writer.Flush()
 }
 
 func (c cliRunner) runStatus(args []string) error {

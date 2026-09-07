@@ -5,11 +5,21 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Catalog applies shared discovery, parsing, deduplication, and ordering rules.
 type Catalog struct {
 	home string
+}
+
+// CatalogProfile records discovery and metadata parsing work.
+type CatalogProfile struct {
+	Discovery       time.Duration
+	MetadataParse   time.Duration
+	Total           time.Duration
+	FilesDiscovered int
+	FilesUnreadable int
 }
 
 // NewCatalog returns a read-only catalog for a Codex home directory.
@@ -24,13 +34,30 @@ func (c Catalog) Sessions() ([]Session, []error, error) {
 
 // SessionsContext is Sessions with cooperative cancellation.
 func (c Catalog) SessionsContext(ctx context.Context) ([]Session, []error, error) {
+	sessions, warnings, _, err := c.SessionsWithProfileContext(ctx)
+	return sessions, warnings, err
+}
+
+// SessionsWithProfileContext returns sessions and catalog phase evidence.
+func (c Catalog) SessionsWithProfileContext(ctx context.Context) ([]Session, []error, CatalogProfile, error) {
+	totalStart := time.Now()
+	discoveryStart := time.Now()
 	paths, err := DiscoverFilesContext(ctx, c.home)
-	if err != nil {
-		return nil, nil, err
+	profile := CatalogProfile{
+		Discovery:       time.Since(discoveryStart),
+		FilesDiscovered: len(paths),
 	}
-	byID, unreadable, err := parseSessionsContext(ctx, paths)
 	if err != nil {
-		return nil, nil, err
+		profile.Total = time.Since(totalStart)
+		return nil, nil, profile, err
+	}
+	metadataStart := time.Now()
+	byID, unreadable, err := parseSessionsContext(ctx, paths)
+	profile.MetadataParse = time.Since(metadataStart)
+	profile.FilesUnreadable = len(unreadable)
+	if err != nil {
+		profile.Total = time.Since(totalStart)
+		return nil, nil, profile, err
 	}
 	sessions := make([]Session, 0, len(byID))
 	for _, session := range byID {
@@ -43,7 +70,8 @@ func (c Catalog) SessionsContext(ctx context.Context) ([]Session, []error, error
 	for _, item := range unreadable {
 		warnings = append(warnings, item.err)
 	}
-	return sessions, warnings, nil
+	profile.Total = time.Since(totalStart)
+	return sessions, warnings, profile, nil
 }
 
 // Resolve returns the session for a full ID or unique ID prefix.

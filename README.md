@@ -142,6 +142,14 @@ Build or refresh the index:
 cxq index
 ```
 
+Profile each refresh phase:
+
+```bash
+cxq index --profile
+```
+
+The profile goes to stderr. The normal index summary remains on stdout.
+
 Search it:
 
 ```bash

@@ -7,7 +7,64 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+type refreshBenchmarkTotals struct {
+	prepare            time.Duration
+	databaseOpen       time.Duration
+	discovery          time.Duration
+	metadataParse      time.Duration
+	catalog            time.Duration
+	indexStateRead     time.Duration
+	hash               time.Duration
+	conversationDecode time.Duration
+	databaseWrite      time.Duration
+	staleCleanup       time.Duration
+	databaseClose      time.Duration
+	filesHashed        int
+	hashBytes          int64
+	filesDecoded       int
+	messagesDecoded    int
+}
+
+func (t *refreshBenchmarkTotals) add(profile RefreshProfile) {
+	t.prepare += profile.Prepare
+	t.databaseOpen += profile.DatabaseOpen
+	t.discovery += profile.Build.Discovery
+	t.metadataParse += profile.Build.MetadataParse
+	t.catalog += profile.Build.Catalog
+	t.indexStateRead += profile.Build.IndexStateRead
+	t.hash += profile.Build.Hash
+	t.conversationDecode += profile.Build.ConversationDecode
+	t.databaseWrite += profile.Build.DatabaseWrite
+	t.staleCleanup += profile.Build.StaleCleanup
+	t.databaseClose += profile.DatabaseClose
+	t.filesHashed += profile.Build.FilesHashed
+	t.hashBytes += profile.Build.HashBytes
+	t.filesDecoded += profile.Build.FilesDecoded
+	t.messagesDecoded += profile.Build.MessagesDecoded
+}
+
+func (t refreshBenchmarkTotals) report(b *testing.B) {
+	b.Helper()
+	iterations := float64(b.N)
+	b.ReportMetric(float64(t.prepare.Nanoseconds())/iterations, "prepare-ns/op")
+	b.ReportMetric(float64(t.databaseOpen.Nanoseconds())/iterations, "db-open-ns/op")
+	b.ReportMetric(float64(t.discovery.Nanoseconds())/iterations, "discovery-ns/op")
+	b.ReportMetric(float64(t.metadataParse.Nanoseconds())/iterations, "metadata-ns/op")
+	b.ReportMetric(float64(t.catalog.Nanoseconds())/iterations, "catalog-ns/op")
+	b.ReportMetric(float64(t.indexStateRead.Nanoseconds())/iterations, "index-read-ns/op")
+	b.ReportMetric(float64(t.hash.Nanoseconds())/iterations, "hash-ns/op")
+	b.ReportMetric(float64(t.conversationDecode.Nanoseconds())/iterations, "decode-ns/op")
+	b.ReportMetric(float64(t.databaseWrite.Nanoseconds())/iterations, "db-write-ns/op")
+	b.ReportMetric(float64(t.staleCleanup.Nanoseconds())/iterations, "stale-cleanup-ns/op")
+	b.ReportMetric(float64(t.databaseClose.Nanoseconds())/iterations, "db-close-ns/op")
+	b.ReportMetric(float64(t.filesHashed)/iterations, "files-hashed/op")
+	b.ReportMetric(float64(t.hashBytes)/iterations, "hash-bytes/op")
+	b.ReportMetric(float64(t.filesDecoded)/iterations, "files-decoded/op")
+	b.ReportMetric(float64(t.messagesDecoded)/iterations, "messages-decoded/op")
+}
 
 func BenchmarkIndexInitialBuild(b *testing.B) {
 	for _, sessions := range []int{100, 1000, 10000} {
@@ -18,6 +75,7 @@ func BenchmarkIndexInitialBuild(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			var databaseBytes int64
+			var totals refreshBenchmarkTotals
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
 				if err := os.Remove(databasePath); err != nil && !os.IsNotExist(err) {
@@ -32,6 +90,7 @@ func BenchmarkIndexInitialBuild(b *testing.B) {
 				if result.Indexed != sessions || result.Skipped != 0 {
 					b.Fatalf("initial refresh = %#v", result)
 				}
+				totals.add(result.Profile)
 
 				b.StopTimer()
 				info, err := os.Stat(databasePath)
@@ -41,6 +100,7 @@ func BenchmarkIndexInitialBuild(b *testing.B) {
 				databaseBytes = info.Size()
 			}
 			b.ReportMetric(float64(databaseBytes), "db-bytes")
+			totals.report(b)
 		})
 	}
 }
@@ -57,6 +117,7 @@ func BenchmarkIndexUnchangedRefresh(b *testing.B) {
 
 			b.ReportAllocs()
 			b.ResetTimer()
+			var totals refreshBenchmarkTotals
 			for i := 0; i < b.N; i++ {
 				result, err := Refresh(context.Background(), home, RefreshOptions{DatabasePath: databasePath})
 				if err != nil {
@@ -65,7 +126,9 @@ func BenchmarkIndexUnchangedRefresh(b *testing.B) {
 				if result.Indexed != 0 || result.Skipped != sessions {
 					b.Fatalf("unchanged refresh = %#v", result)
 				}
+				totals.add(result.Profile)
 			}
+			totals.report(b)
 		})
 	}
 }
@@ -83,6 +146,7 @@ func BenchmarkIndexSingleSessionUpdate(b *testing.B) {
 			target := paths[sessions/2]
 			b.ReportAllocs()
 			b.ResetTimer()
+			var totals refreshBenchmarkTotals
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
 				writeBenchmarkRollout(b, target, sessions/2, fmt.Sprintf("generation-%08d", i+1))
@@ -95,7 +159,9 @@ func BenchmarkIndexSingleSessionUpdate(b *testing.B) {
 				if result.Indexed != 1 || result.Skipped != sessions-1 {
 					b.Fatalf("single-session refresh = %#v", result)
 				}
+				totals.add(result.Profile)
 			}
+			totals.report(b)
 		})
 	}
 }
