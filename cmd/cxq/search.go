@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"strings"
 	"text/tabwriter"
 
@@ -68,7 +69,9 @@ func (c cliRunner) runSearch(args []string) error {
 				return err
 			}
 			if *profileFlag {
-				writeIndexedSearchProfile(c.stderr, result.Profile)
+				if err := writeIndexedSearchProfile(c.stderr, result.Profile); err != nil {
+					return err
+				}
 			}
 			return nil
 		}
@@ -92,7 +95,9 @@ func (c cliRunner) runSearch(args []string) error {
 			return err
 		}
 		if *profileFlag {
-			writeIndexedSearchProfile(c.stderr, result.Profile)
+			if err := writeIndexedSearchProfile(c.stderr, result.Profile); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -283,8 +288,7 @@ func (c cliRunner) runPack(args []string) error {
 	return nil
 }
 
-
-func writeIndexedSearchProfile(w interface{ Write([]byte) (int, error) }, profile indexer.SearchProfile) {
+func writeIndexedSearchProfile(w io.Writer, profile indexer.SearchProfile) error {
 	writer := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(writer, "SEARCH_PROFILE")
 	fmt.Fprintf(writer, "BACKEND\t%s\n", profile.Index.Backend)
@@ -296,5 +300,5 @@ func writeIndexedSearchProfile(w interface{ Write([]byte) (int, error) }, profil
 	fmt.Fprintf(writer, "TOTAL\t%s\n", profile.Total)
 	fmt.Fprintf(writer, "ROWS_SCANNED\t%d\n", profile.Index.RowsScanned)
 	fmt.Fprintf(writer, "SESSIONS_RETURNED\t%d\n", profile.Index.SessionsReturned)
-	_ = writer.Flush()
+	return writer.Flush()
 }
