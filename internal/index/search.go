@@ -23,20 +23,39 @@ const (
 // because FTS5 trigram MATCH cannot produce tokens shorter than three code
 // points. Both paths remain derived-index only.
 func (s *SQLiteIndex) Search(ctx context.Context, options SearchOptions) ([]SearchMatch, error) {
-	query := strings.TrimSpace(options.Query)
-	if query == "" {
-		return nil, errors.New("search query must not be blank")
-	}
-	if options.Limit <= 0 {
-		return nil, errors.New("search limit must be greater than zero")
-	}
-	if utf8.RuneCountInString(query) < trigramMinimumRunes {
-		return s.searchShortLiteral(ctx, query, options)
-	}
-	return s.searchFTS(ctx, query, options)
+	matches, _, err := s.SearchWithProfile(ctx, options)
+	return matches, err
 }
 
-func (s *SQLiteIndex) searchFTS(ctx context.Context, query string, options SearchOptions) ([]SearchMatch, error) {
+// SearchWithProfile runs the same indexed retrieval path as Search while also
+// returning lightweight phase timings and row/session counts.
+func (s *SQLiteIndex) SearchWithProfile(ctx context.Context, options SearchOptions) ([]SearchMatch, SearchProfile, error) {
+	query := strings.TrimSpace(options.Query)
+	if query == "" {
+		return nil, SearchProfile{}, errors.New("search query must not be blank")
+	}
+	if options.Limit <= 0 {
+		return nil, SearchProfile{}, errors.New("search limit must be greater than zero")
+	}
+
+	start := time.Now()
+	var (
+		matches []SearchMatch
+		profile SearchProfile
+		err     error
+	)
+	if utf8.RuneCountInString(query) < trigramMinimumRunes {
+		matches, profile, err = s.searchShortLiteralProfiled(ctx, query, options)
+	} else {
+		matches, profile, err = s.searchFTSProfiled(ctx, query, options)
+	}
+	profile.SearchTotal = time.Since(start)
+	profile.SessionsReturned = len(matches)
+	return matches, profile, err
+}
+
+func (s *SQLiteIndex) searchFTSProfiled(ctx context.Context, query string, options SearchOptions) ([]SearchMatch, SearchProfile, error) {
+	profile := SearchProfile{Backend: "fts5"}
 	var filters []string
 	var args []any
 	args = append(args, quoteFTSLiteral(query))
@@ -55,6 +74,7 @@ func (s *SQLiteIndex) searchFTS(ctx context.Context, query string, options Searc
 		where += " AND " + strings.Join(filters, " AND ")
 	}
 
+	queryStart := time.Now()
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 SELECT
     s.session_id,
@@ -76,14 +96,19 @@ JOIN messages AS m
 WHERE %s
 ORDER BY bm25(messages_fts) ASC, s.timestamp DESC, CAST(f.ordinal AS INTEGER) ASC
 `, where), args...)
+	profile.QuerySetup = time.Since(queryStart)
 	if err != nil {
-		return nil, fmt.Errorf("search sqlite lexical index: %w", err)
+		return nil, profile, fmt.Errorf("search sqlite lexical index: %w", err)
 	}
 	defer rows.Close()
 
 	matches := make([]SearchMatch, 0, options.Limit)
 	seenSessions := make(map[string]struct{}, options.Limit)
+	scanStart := time.Now()
+	var snippetDuration time.Duration
 	for rows.Next() {
+		profile.RowsScanned++
+
 		var match SearchMatch
 		var timestamp string
 		var text string
@@ -100,7 +125,7 @@ ORDER BY bm25(messages_fts) ASC, s.timestamp DESC, CAST(f.ordinal AS INTEGER) AS
 			&text,
 			&match.Score,
 		); err != nil {
-			return nil, fmt.Errorf("scan sqlite lexical match: %w", err)
+			return nil, profile, fmt.Errorf("scan sqlite lexical match: %w", err)
 		}
 		if _, seen := seenSessions[match.Session.ID]; seen {
 			continue
@@ -108,10 +133,12 @@ ORDER BY bm25(messages_fts) ASC, s.timestamp DESC, CAST(f.ordinal AS INTEGER) AS
 
 		parsed, err := time.Parse(time.RFC3339Nano, timestamp)
 		if err != nil {
-			return nil, fmt.Errorf("parse indexed session timestamp %q: %w", timestamp, err)
+			return nil, profile, fmt.Errorf("parse indexed session timestamp %q: %w", timestamp, err)
 		}
 		match.Session.Timestamp = parsed
+		snippetStart := time.Now()
 		match.Snippet = literalSnippet(text, query)
+		snippetDuration += time.Since(snippetStart)
 		match.Why = lexicalWhy
 		seenSessions[match.Session.ID] = struct{}{}
 		matches = append(matches, match)
@@ -119,13 +146,19 @@ ORDER BY bm25(messages_fts) ASC, s.timestamp DESC, CAST(f.ordinal AS INTEGER) AS
 			break
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate sqlite lexical matches: %w", err)
+	scanDuration := time.Since(scanStart)
+	profile.Snippet = snippetDuration
+	if scanDuration > snippetDuration {
+		profile.ResultScan = scanDuration - snippetDuration
 	}
-	return matches, nil
+	if err := rows.Err(); err != nil {
+		return nil, profile, fmt.Errorf("iterate sqlite lexical matches: %w", err)
+	}
+	return matches, profile, nil
 }
 
-func (s *SQLiteIndex) searchShortLiteral(ctx context.Context, query string, options SearchOptions) ([]SearchMatch, error) {
+func (s *SQLiteIndex) searchShortLiteralProfiled(ctx context.Context, query string, options SearchOptions) ([]SearchMatch, SearchProfile, error) {
+	profile := SearchProfile{Backend: "substring"}
 	var filters []string
 	var args []any
 	if project := strings.TrimSpace(options.Project); project != "" {
@@ -141,6 +174,8 @@ func (s *SQLiteIndex) searchShortLiteral(ctx context.Context, query string, opti
 	if len(filters) > 0 {
 		where = "WHERE " + strings.Join(filters, " AND ")
 	}
+
+	queryStart := time.Now()
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 SELECT
     s.session_id,
@@ -158,18 +193,23 @@ JOIN sessions AS s ON s.session_id = m.session_id
 %s
 ORDER BY s.timestamp DESC, m.ordinal ASC
 `, where), args...)
+	profile.QuerySetup = time.Since(queryStart)
 	if err != nil {
-		return nil, fmt.Errorf("search indexed messages for short literal: %w", err)
+		return nil, profile, fmt.Errorf("search indexed messages for short literal: %w", err)
 	}
 	defer rows.Close()
 
 	needle := strings.ToLower(query)
 	matches := make([]SearchMatch, 0, options.Limit)
 	seenSessions := make(map[string]struct{}, options.Limit)
+	scanStart := time.Now()
+	var snippetDuration time.Duration
 	for rows.Next() {
+		profile.RowsScanned++
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, profile, err
 		}
+
 		var match SearchMatch
 		var timestamp string
 		var text string
@@ -185,7 +225,7 @@ ORDER BY s.timestamp DESC, m.ordinal ASC
 			&match.Role,
 			&text,
 		); err != nil {
-			return nil, fmt.Errorf("scan indexed short-literal candidate: %w", err)
+			return nil, profile, fmt.Errorf("scan indexed short-literal candidate: %w", err)
 		}
 		if _, seen := seenSessions[match.Session.ID]; seen {
 			continue
@@ -195,10 +235,12 @@ ORDER BY s.timestamp DESC, m.ordinal ASC
 		}
 		parsed, err := time.Parse(time.RFC3339Nano, timestamp)
 		if err != nil {
-			return nil, fmt.Errorf("parse indexed session timestamp %q: %w", timestamp, err)
+			return nil, profile, fmt.Errorf("parse indexed session timestamp %q: %w", timestamp, err)
 		}
 		match.Session.Timestamp = parsed
+		snippetStart := time.Now()
 		match.Snippet = literalSnippet(text, query)
+		snippetDuration += time.Since(snippetStart)
 		match.Score = 0
 		match.Why = substringWhy
 		seenSessions[match.Session.ID] = struct{}{}
@@ -207,10 +249,15 @@ ORDER BY s.timestamp DESC, m.ordinal ASC
 			break
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate indexed short-literal candidates: %w", err)
+	scanDuration := time.Since(scanStart)
+	profile.Snippet = snippetDuration
+	if scanDuration > snippetDuration {
+		profile.ResultScan = scanDuration - snippetDuration
 	}
-	return matches, nil
+	if err := rows.Err(); err != nil {
+		return nil, profile, fmt.Errorf("iterate indexed short-literal candidates: %w", err)
+	}
+	return matches, profile, nil
 }
 
 func literalSnippet(text, query string) string {

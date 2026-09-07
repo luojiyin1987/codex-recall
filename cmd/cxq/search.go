@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"strings"
 	"text/tabwriter"
 
@@ -19,6 +20,7 @@ func (c cliRunner) runSearch(args []string) error {
 	sourceFlag := flags.String("source", "", "only sessions whose source exactly matches this value")
 	indexFlag := flags.Bool("index", false, "search the derived SQLite FTS index instead of live rollout files")
 	explainFlag := flags.Bool("explain", false, "show indexed retrieval metadata (requires --index)")
+	profileFlag := flags.Bool("profile", false, "show indexed search timing profile on stderr (requires --index)")
 	dbFlag := flags.String("db", "", "SQLite index path for --index (default: CODEX_HOME/.codex-recall/index.db)")
 	jsonFlag := flags.Bool("json", false, "write machine-readable JSON")
 	if err := flags.Parse(args); err != nil {
@@ -28,7 +30,7 @@ func (c cliRunner) runSearch(args []string) error {
 		return fmt.Errorf("search requires QUERY; to list sessions without a text query, use cxq list [--project PROJECT] [--source SOURCE]")
 	}
 	if flags.NArg() != 1 {
-		return fmt.Errorf("search accepts exactly one QUERY; usage: cxq search [--json] [--index] [--explain] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY")
+		return fmt.Errorf("search accepts exactly one QUERY; usage: cxq search [--json] [--index] [--explain] [--profile] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY")
 	}
 	if strings.TrimSpace(flags.Arg(0)) == "" {
 		return fmt.Errorf("search requires a non-blank QUERY")
@@ -42,6 +44,9 @@ func (c cliRunner) runSearch(args []string) error {
 	}
 	if !*indexFlag && *explainFlag {
 		return fmt.Errorf("--explain requires --index")
+	}
+	if !*indexFlag && *profileFlag {
+		return fmt.Errorf("--profile requires --index")
 	}
 
 	home, err := resolveHome(*homeFlag)
@@ -60,7 +65,15 @@ func (c cliRunner) runSearch(args []string) error {
 			return err
 		}
 		if *jsonFlag {
-			return writeIndexedSearchJSON(c.stdout, query, result.Matches)
+			if err := writeIndexedSearchJSON(c.stdout, query, result.Matches); err != nil {
+				return err
+			}
+			if *profileFlag {
+				if err := writeIndexedSearchProfile(c.stderr, result.Profile); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 
 		writer := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
@@ -78,7 +91,15 @@ func (c cliRunner) runSearch(args []string) error {
 					formatTimestamp(match.Session.Timestamp), match.Session.Project, match.Session.Source, match.Role, match.Session.ID, match.Snippet)
 			}
 		}
-		return writer.Flush()
+		if err := writer.Flush(); err != nil {
+			return err
+		}
+		if *profileFlag {
+			if err := writeIndexedSearchProfile(c.stderr, result.Profile); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	result, err := codex.SearchContext(c.ctx, home, codex.SearchOptions{
@@ -265,4 +286,19 @@ func (c cliRunner) runPack(args []string) error {
 		}
 	}
 	return nil
+}
+
+func writeIndexedSearchProfile(w io.Writer, profile indexer.SearchProfile) error {
+	writer := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(writer, "SEARCH_PROFILE")
+	fmt.Fprintf(writer, "BACKEND\t%s\n", profile.Index.Backend)
+	fmt.Fprintf(writer, "DATABASE_OPEN\t%s\n", profile.DatabaseOpen)
+	fmt.Fprintf(writer, "QUERY_SETUP\t%s\n", profile.Index.QuerySetup)
+	fmt.Fprintf(writer, "RESULT_SCAN\t%s\n", profile.Index.ResultScan)
+	fmt.Fprintf(writer, "SNIPPET\t%s\n", profile.Index.Snippet)
+	fmt.Fprintf(writer, "INDEX_SEARCH\t%s\n", profile.Index.SearchTotal)
+	fmt.Fprintf(writer, "TOTAL\t%s\n", profile.Total)
+	fmt.Fprintf(writer, "ROWS_SCANNED\t%d\n", profile.Index.RowsScanned)
+	fmt.Fprintf(writer, "SESSIONS_RETURNED\t%d\n", profile.Index.SessionsReturned)
+	return writer.Flush()
 }
