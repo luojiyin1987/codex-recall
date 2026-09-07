@@ -79,7 +79,7 @@ func (c cliRunner) printUsage() {
 	fmt.Fprintln(c.stderr, `codex-recall (cxq)
 
 Usage:
-  cxq index [--profile] [--home PATH] [--db PATH]
+  cxq index [--profile] [--full-hash] [--home PATH] [--db PATH]
   cxq status [--json] [--home PATH] [--db PATH]
   cxq list [--json] [--home PATH] [--project PROJECT] [--source SOURCE]
   cxq search [--json] [--index] [--explain] [--profile] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY

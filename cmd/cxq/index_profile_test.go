@@ -68,3 +68,38 @@ func TestCLIRunnerIndexProfileWritesRefreshEvidenceToStderr(t *testing.T) {
 		t.Fatalf("index summary = %q", stdout.String())
 	}
 }
+
+func TestCLIRunnerIndexFullHashVerifiesUnchangedRollout(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "sessions", "2026", "09", "07", "rollout-2026-09-07T02-00-00-full-hash.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data := strings.Join([]string{
+		`{"timestamp":"2026-09-07T02:00:00Z","type":"session_meta","payload":{"id":"full-hash","timestamp":"2026-09-07T02:00:00Z","cwd":"/tmp/full-hash-project","source":"cli"}}`,
+		`{"timestamp":"2026-09-07T02:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"verify rollout"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	runner := newCLIRunner(strings.NewReader(""), &stdout, &stderr)
+	if err := runner.run([]string{"index", "--home", home}); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+
+	if err := runner.run([]string{"index", "--full-hash", "--profile", "--home", home}); err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(stderr.String())
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "FILES_HASHED" && fields[i+1] == "1" {
+			return
+		}
+	}
+	t.Fatalf("full hash profile did not report one hashed file: %q", stderr.String())
+}

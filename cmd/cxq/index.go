@@ -15,18 +15,22 @@ func (c cliRunner) runIndex(args []string) error {
 	homeFlag := flags.String("home", "", "Codex home directory (default: $CODEX_HOME or ~/.codex)")
 	dbFlag := flags.String("db", "", "SQLite index path (default: CODEX_HOME/.codex-recall/index.db)")
 	profileFlag := flags.Bool("profile", false, "show index refresh timing profile on stderr")
+	fullHashFlag := flags.Bool("full-hash", false, "verify every rollout with SHA256")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("index: %w", err)
 	}
 	if flags.NArg() != 0 {
-		return fmt.Errorf("index does not accept positional arguments; usage: cxq index [--profile] [--home PATH] [--db PATH]")
+		return fmt.Errorf("index does not accept positional arguments; usage: cxq index [--profile] [--full-hash] [--home PATH] [--db PATH]")
 	}
 
 	home, err := resolveHome(*homeFlag)
 	if err != nil {
 		return err
 	}
-	result, err := indexer.Refresh(c.ctx, home, indexer.RefreshOptions{DatabasePath: *dbFlag})
+	result, err := indexer.Refresh(c.ctx, home, indexer.RefreshOptions{
+		DatabasePath: *dbFlag,
+		FullHash:     *fullHashFlag,
+	})
 	if err != nil {
 		return err
 	}

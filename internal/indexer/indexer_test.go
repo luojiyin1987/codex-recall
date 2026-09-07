@@ -141,6 +141,56 @@ func TestBuildSkipsUnchangedContent(t *testing.T) {
 	}
 }
 
+func TestBuildFullHashDetectsRewriteWithMatchingFingerprint(t *testing.T) {
+	home := t.TempDir()
+	path := writeRollout(t, home, "session-1", "hello", "hello back")
+	store := newFakeStore()
+
+	if _, err := Build(context.Background(), home, store); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten := strings.Replace(string(data), `"text":"hello"`, `"text":"jello"`, 1)
+	if rewritten == string(data) || len(rewritten) != len(data) {
+		t.Fatal("test rewrite did not preserve the rollout size")
+	}
+	if err := os.WriteFile(path, []byte(rewritten), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	fastResult, err := Build(context.Background(), home, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fastResult.Profile.FilesHashed != 0 || fastResult.Profile.FingerprintFastPaths != 1 {
+		t.Fatalf("default Build() profile = %#v", fastResult.Profile)
+	}
+	if got := store.messages["session-1"][0].Text; got != "hello" {
+		t.Fatalf("message after default Build() = %q, want hello", got)
+	}
+
+	verified, err := BuildWithOptions(context.Background(), home, store, BuildOptions{FullHash: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified.Indexed != 1 || verified.Profile.FilesHashed != 1 || verified.Profile.FilesDecoded != 1 {
+		t.Fatalf("verified Build() = %#v", verified)
+	}
+	if got := store.messages["session-1"][0].Text; got != "jello" {
+		t.Fatalf("message after verified Build() = %q, want jello", got)
+	}
+}
+
 func TestBuildUpdatesFingerprintWhenContentHashIsUnchanged(t *testing.T) {
 	home := t.TempDir()
 	path := writeRollout(t, home, "session-1", "hello", "hello back")

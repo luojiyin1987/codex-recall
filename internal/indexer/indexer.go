@@ -25,6 +25,10 @@ type Store interface {
 	DeleteSession(ctx context.Context, id string) error
 }
 
+type BuildOptions struct {
+	FullHash bool
+}
+
 type Result struct {
 	Discovered int
 	Indexed    int
@@ -63,6 +67,11 @@ type BuildProfile struct {
 // Build incrementally refreshes a derived index from the logical Codex
 // sessions under home. Rollout files remain the source of truth.
 func Build(ctx context.Context, home string, store Store) (result Result, returnErr error) {
+	return BuildWithOptions(ctx, home, store, BuildOptions{})
+}
+
+// BuildWithOptions refreshes an index with explicit verification options.
+func BuildWithOptions(ctx context.Context, home string, store Store, options BuildOptions) (result Result, returnErr error) {
 	buildStart := time.Now()
 	defer func() {
 		result.Profile.Total = time.Since(buildStart)
@@ -154,7 +163,7 @@ func Build(ctx context.Context, home string, store Store) (result Result, return
 			current.RolloutPath == session.Path &&
 			current.RolloutSize == info.Size() &&
 			current.RolloutMTimeNS == info.ModTime().UnixNano()
-		if fingerprintMatches {
+		if fingerprintMatches && !options.FullHash {
 			result.Skipped++
 			result.Profile.FingerprintFastPaths++
 			continue
@@ -171,6 +180,10 @@ func Build(ctx context.Context, home string, store Store) (result Result, return
 		result.Profile.FilesHashed++
 
 		if found && current.ContentHash == contentHash && current.RolloutPath == session.Path {
+			if fingerprintMatches {
+				result.Skipped++
+				continue
+			}
 			current.Timestamp = session.Timestamp
 			current.CWD = session.CWD
 			current.Project = session.Project()
