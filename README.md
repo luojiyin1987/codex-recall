@@ -157,6 +157,14 @@ cxq search --index --explain "WebRTC"
 
 `--explain` adds the matched message ordinal, retrieval score, and retrieval reason to the terminal table. FTS5 trigram results report `lexical:fts5`; one- and two-character literal fallback results report `lexical:substring`. Indexed JSON output already includes the same `ordinal`, `score`, and `why` fields, so its schema is unchanged.
 
+Profile the indexed retrieval path:
+
+```bash
+cxq search --index --profile "WebRTC"
+```
+
+`--profile` writes lightweight timing and cardinality evidence to stderr, leaving the normal table or `--json` output on stdout unchanged. It reports the retrieval backend (`fts5` or `substring`), database-open time, query setup, result scanning, snippet formatting, total indexed-search time, rows scanned, and sessions returned. `RESULT_SCAN` excludes the separately reported `SNIPPET` time.
+
 Inspect it without refreshing:
 
 ```bash
