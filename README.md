@@ -149,6 +149,14 @@ cxq search --index "WebRTC"
 cxq search --index --project deepseek-harness-remote "WebRTC"
 ```
 
+Explain why each indexed result was selected:
+
+```bash
+cxq search --index --explain "WebRTC"
+```
+
+`--explain` adds the matched message ordinal, retrieval score, and retrieval reason to the terminal table. FTS5 trigram results report `lexical:fts5`; one- and two-character literal fallback results report `lexical:substring`. Indexed JSON output already includes the same `ordinal`, `score`, and `why` fields, so its schema is unchanged.
+
 Inspect it without refreshing:
 
 ```bash
