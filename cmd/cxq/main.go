@@ -82,7 +82,7 @@ Usage:
   cxq index [--home PATH] [--db PATH]
   cxq status [--json] [--home PATH] [--db PATH]
   cxq list [--json] [--home PATH] [--project PROJECT] [--source SOURCE]
-  cxq search [--json] [--index] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
+  cxq search [--json] [--index] [--explain] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
   cxq compare [--json] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
   cxq pack [--json] [--db PATH] [--home PATH] [--limit N] [--project PROJECT] [--source SOURCE] QUERY
   cxq show [--home PATH] SESSION
@@ -112,6 +112,7 @@ Examples:
   cxq search --project deepseek-harness-remote "WebRTC"
   cxq search --json --project deepseek-harness-remote "WebRTC"
   cxq search --index --json --project deepseek-harness-remote "WebRTC"
+  cxq search --index --explain --project deepseek-harness-remote "WebRTC"
   cxq compare --project deepseek-harness-remote "WebRTC"
   cxq compare --json --project deepseek-harness-remote "WebRTC"
   cxq pack --project deepseek-harness-remote "WebRTC"
