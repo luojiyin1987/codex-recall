@@ -20,6 +20,7 @@ const (
 
 type Store interface {
 	Sessions(ctx context.Context) ([]index.Session, error)
+	UpsertSessions(ctx context.Context, sessions []index.Session) error
 	ReplaceSessions(ctx context.Context, replacements []index.SessionReplacement) error
 	DeleteSession(ctx context.Context, id string) error
 }
@@ -35,23 +36,28 @@ type Result struct {
 
 // BuildProfile records work performed during one derived-index build.
 type BuildProfile struct {
-	Discovery               time.Duration
-	MetadataParse           time.Duration
-	CatalogFinalize         time.Duration
-	IndexStateRead          time.Duration
-	Hash                    time.Duration
-	ConversationDecode      time.Duration
-	DatabaseWrite           time.Duration
-	StaleCleanup            time.Duration
-	Total                   time.Duration
-	FilesHashed             int
-	HashBytes               int64
-	FilesDecoded            int
-	ConversationBytes       int64
-	MessagesDecoded         int
-	BatchesWritten          int
-	RolloutFiles            int
-	MetadataUnreadableFiles int
+	Discovery                 time.Duration
+	MetadataParse             time.Duration
+	CatalogFinalize           time.Duration
+	IndexStateRead            time.Duration
+	Fingerprint               time.Duration
+	Hash                      time.Duration
+	ConversationDecode        time.Duration
+	DatabaseWrite             time.Duration
+	StaleCleanup              time.Duration
+	Total                     time.Duration
+	FilesHashed               int
+	HashBytes                 int64
+	FilesDecoded              int
+	ConversationBytes         int64
+	MessagesDecoded           int
+	BatchesWritten            int
+	RolloutFiles              int
+	MetadataUnreadableFiles   int
+	FilesFingerprinted        int
+	FingerprintFastPaths      int
+	FingerprintUpdates        int
+	FingerprintBatchesWritten int
 }
 
 // Build incrementally refreshes a derived index from the logical Codex
@@ -91,6 +97,7 @@ func Build(ctx context.Context, home string, store Store) (result Result, return
 	}
 
 	pending := make([]index.SessionReplacement, 0, indexWriteBatchSize)
+	pendingFingerprintUpdates := make([]index.Session, 0, indexWriteBatchSize)
 	flushPending := func() error {
 		if len(pending) == 0 {
 			return nil
@@ -109,10 +116,48 @@ func Build(ctx context.Context, home string, store Store) (result Result, return
 		pending = pending[:0]
 		return nil
 	}
+	flushFingerprintUpdates := func() error {
+		if len(pendingFingerprintUpdates) == 0 {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		writeStart := time.Now()
+		err := store.UpsertSessions(ctx, pendingFingerprintUpdates)
+		result.Profile.DatabaseWrite += time.Since(writeStart)
+		if err != nil {
+			return err
+		}
+		result.Profile.FingerprintUpdates += len(pendingFingerprintUpdates)
+		result.Profile.FingerprintBatchesWritten++
+		pendingFingerprintUpdates = pendingFingerprintUpdates[:0]
+		return nil
+	}
 
 	for _, session := range sessions {
 		if err := ctx.Err(); err != nil {
 			return result, err
+		}
+
+		fingerprintStart := time.Now()
+		info, err := os.Stat(session.Path)
+		result.Profile.Fingerprint += time.Since(fingerprintStart)
+		if err != nil {
+			result.Warnings = append(result.Warnings, fmt.Errorf("%s: stat rollout: %w", session.Path, err))
+			continue
+		}
+		result.Profile.FilesFingerprinted++
+
+		current, found := indexedByID[session.ID]
+		fingerprintMatches := found &&
+			current.RolloutPath == session.Path &&
+			current.RolloutSize == info.Size() &&
+			current.RolloutMTimeNS == info.ModTime().UnixNano()
+		if fingerprintMatches {
+			result.Skipped++
+			result.Profile.FingerprintFastPaths++
+			continue
 		}
 
 		hashStart := time.Now()
@@ -125,9 +170,20 @@ func Build(ctx context.Context, home string, store Store) (result Result, return
 		}
 		result.Profile.FilesHashed++
 
-		current, found := indexedByID[session.ID]
 		if found && current.ContentHash == contentHash && current.RolloutPath == session.Path {
+			current.Timestamp = session.Timestamp
+			current.CWD = session.CWD
+			current.Project = session.Project()
+			current.Source = session.Source
+			current.RolloutSize = info.Size()
+			current.RolloutMTimeNS = info.ModTime().UnixNano()
+			pendingFingerprintUpdates = append(pendingFingerprintUpdates, current)
 			result.Skipped++
+			if len(pendingFingerprintUpdates) == indexWriteBatchSize {
+				if err := flushFingerprintUpdates(); err != nil {
+					return result, fmt.Errorf("update indexed session fingerprint batch: %w", err)
+				}
+			}
 			continue
 		}
 
@@ -158,13 +214,15 @@ func Build(ctx context.Context, home string, store Store) (result Result, return
 		}
 
 		indexedSession := index.Session{
-			ID:          session.ID,
-			Timestamp:   session.Timestamp,
-			CWD:         session.CWD,
-			Project:     session.Project(),
-			Source:      session.Source,
-			RolloutPath: session.Path,
-			ContentHash: contentHash,
+			ID:             session.ID,
+			Timestamp:      session.Timestamp,
+			CWD:            session.CWD,
+			Project:        session.Project(),
+			Source:         session.Source,
+			RolloutPath:    session.Path,
+			ContentHash:    contentHash,
+			RolloutSize:    info.Size(),
+			RolloutMTimeNS: info.ModTime().UnixNano(),
 		}
 		pending = append(pending, index.SessionReplacement{
 			Session:  indexedSession,
@@ -178,6 +236,9 @@ func Build(ctx context.Context, home string, store Store) (result Result, return
 	}
 	if err := flushPending(); err != nil {
 		return result, fmt.Errorf("replace indexed session batch: %w", err)
+	}
+	if err := flushFingerprintUpdates(); err != nil {
+		return result, fmt.Errorf("update indexed session fingerprint batch: %w", err)
 	}
 
 	staleStart := time.Now()

@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefaultIndexPathUsesCodexHome(t *testing.T) {
@@ -42,6 +43,51 @@ func TestRefreshCreatesDefaultIndexAndSkipsUnchangedSession(t *testing.T) {
 	}
 	if second.Indexed != 0 || second.Skipped != 1 {
 		t.Fatalf("second Refresh() = %#v", second)
+	}
+	if second.Profile.Build.FilesHashed != 0 || second.Profile.Build.HashBytes != 0 {
+		t.Fatalf("unchanged refresh hash profile = %#v", second.Profile.Build)
+	}
+	if second.Profile.Build.FingerprintFastPaths != 1 {
+		t.Fatalf("unchanged refresh fingerprint profile = %#v", second.Profile.Build)
+	}
+}
+
+func TestRefreshPersistsChangedFingerprintWhenHashIsUnchanged(t *testing.T) {
+	home := t.TempDir()
+	path := writeRollout(t, home, "session-refresh", "hello", "world")
+
+	if _, err := Refresh(context.Background(), home, RefreshOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedTime := info.ModTime().Add(2 * time.Second)
+	if err := os.Chtimes(path, changedTime, changedTime); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := Refresh(context.Background(), home, RefreshOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.Indexed != 0 || changed.Skipped != 1 {
+		t.Fatalf("changed fingerprint refresh = %#v", changed)
+	}
+	if changed.Profile.Build.FilesHashed != 1 || changed.Profile.Build.FilesDecoded != 0 {
+		t.Fatalf("changed fingerprint profile = %#v", changed.Profile.Build)
+	}
+	if changed.Profile.Build.FingerprintUpdates != 1 {
+		t.Fatalf("fingerprint updates = %d, want 1", changed.Profile.Build.FingerprintUpdates)
+	}
+
+	unchanged, err := Refresh(context.Background(), home, RefreshOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Profile.Build.FilesHashed != 0 || unchanged.Profile.Build.FingerprintFastPaths != 1 {
+		t.Fatalf("persisted fingerprint profile = %#v", unchanged.Profile.Build)
 	}
 }
 

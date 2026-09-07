@@ -60,7 +60,6 @@ VALUES (?, ?, ?, ?, ?)
 	}
 }
 
-
 func TestOpenSQLiteMigratesV2Unicode61FTSToTrigram(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v2.db")
 	db, err := sql.Open(sqliteDriverName, path)
@@ -127,5 +126,58 @@ VALUES (?, ?, ?, ?)
 	}
 	if len(matches) != 1 || matches[0].Session.ID != "legacy-v2" {
 		t.Fatalf("matches = %#v", matches)
+	}
+}
+
+func TestOpenSQLiteMigratesV3WithEmptyRolloutFingerprint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v3.db")
+	db, err := sql.Open(sqliteDriverName, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range schemaStatements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, version := range []int{2, 3} {
+		for _, statement := range schemaMigrations[version] {
+			if _, err := db.Exec(statement); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := db.Exec("PRAGMA user_version = 3"); err != nil {
+		t.Fatal(err)
+	}
+
+	timestamp := time.Date(2026, 9, 7, 3, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+	if _, err := db.Exec(`
+INSERT INTO sessions (
+    session_id, timestamp, cwd, project, source, rollout_path, content_hash, indexed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`, "legacy-v3", timestamp, "/work/legacy", "legacy", "cli", "/codex/legacy-v3.jsonl", "hash-v3", timestamp); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+
+	assertSchemaVersion(t, idx.db, schemaVersion)
+	session, ok, err := idx.Session(context.Background(), "legacy-v3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("migrated session not found")
+	}
+	if session.RolloutSize != 0 || session.RolloutMTimeNS != 0 {
+		t.Fatalf("migrated fingerprint = (%d, %d)", session.RolloutSize, session.RolloutMTimeNS)
 	}
 }
