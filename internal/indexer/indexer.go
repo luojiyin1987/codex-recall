@@ -7,13 +7,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/luojiyin1987/codex-recall/internal/codex"
 	"github.com/luojiyin1987/codex-recall/internal/index"
 )
 
 const (
-	contentHashVersion = "v1"
+	contentHashVersion  = "v1"
 	indexWriteBatchSize = 256
 )
 
@@ -29,16 +30,46 @@ type Result struct {
 	Skipped    int
 	Deleted    int
 	Warnings   []error
+	Profile    BuildProfile
+}
+
+// BuildProfile records work performed during one derived-index build.
+type BuildProfile struct {
+	Discovery               time.Duration
+	MetadataParse           time.Duration
+	CatalogFinalize         time.Duration
+	IndexStateRead          time.Duration
+	Hash                    time.Duration
+	ConversationDecode      time.Duration
+	DatabaseWrite           time.Duration
+	StaleCleanup            time.Duration
+	Total                   time.Duration
+	FilesHashed             int
+	HashBytes               int64
+	FilesDecoded            int
+	ConversationBytes       int64
+	MessagesDecoded         int
+	BatchesWritten          int
+	RolloutFiles            int
+	MetadataUnreadableFiles int
 }
 
 // Build incrementally refreshes a derived index from the logical Codex
 // sessions under home. Rollout files remain the source of truth.
-func Build(ctx context.Context, home string, store Store) (Result, error) {
-	sessions, warnings, err := codex.NewCatalog(home).SessionsContext(ctx)
-	result := Result{
-		Discovered: len(sessions),
-		Warnings:   append([]error(nil), warnings...),
-	}
+func Build(ctx context.Context, home string, store Store) (result Result, returnErr error) {
+	buildStart := time.Now()
+	defer func() {
+		result.Profile.Total = time.Since(buildStart)
+	}()
+
+	sessions, warnings, catalogProfile, err := codex.NewCatalog(home).SessionsWithProfileContext(ctx)
+	result.Profile.Discovery = catalogProfile.Discovery
+	result.Profile.MetadataParse = catalogProfile.MetadataParse
+	result.Profile.CatalogFinalize = catalogProfile.Finalize
+	result.Profile.RolloutFiles = catalogProfile.FilesDiscovered
+	result.Profile.MetadataUnreadableFiles = catalogProfile.MetadataUnreadableFiles
+	result.Discovered = len(sessions)
+	result.Warnings = append([]error(nil), warnings...)
 	if err != nil {
 		return result, fmt.Errorf("discover Codex sessions: %w", err)
 	}
@@ -48,7 +79,9 @@ func Build(ctx context.Context, home string, store Store) (Result, error) {
 		currentSessionIDs[session.ID] = struct{}{}
 	}
 
+	indexStateStart := time.Now()
 	indexedSessions, err := store.Sessions(ctx)
+	result.Profile.IndexStateRead = time.Since(indexStateStart)
 	if err != nil {
 		return result, fmt.Errorf("list indexed sessions: %w", err)
 	}
@@ -65,10 +98,14 @@ func Build(ctx context.Context, home string, store Store) (Result, error) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := store.ReplaceSessions(ctx, pending); err != nil {
+		writeStart := time.Now()
+		err := store.ReplaceSessions(ctx, pending)
+		result.Profile.DatabaseWrite += time.Since(writeStart)
+		if err != nil {
 			return err
 		}
 		result.Indexed += len(pending)
+		result.Profile.BatchesWritten++
 		pending = pending[:0]
 		return nil
 	}
@@ -78,11 +115,15 @@ func Build(ctx context.Context, home string, store Store) (Result, error) {
 			return result, err
 		}
 
-		contentHash, err := hashRolloutContext(ctx, session.Path)
+		hashStart := time.Now()
+		contentHash, bytesRead, err := hashRolloutContextMeasured(ctx, session.Path)
+		result.Profile.Hash += time.Since(hashStart)
+		result.Profile.HashBytes += bytesRead
 		if err != nil {
 			result.Warnings = append(result.Warnings, fmt.Errorf("%s: hash rollout: %w", session.Path, err))
 			continue
 		}
+		result.Profile.FilesHashed++
 
 		current, found := indexedByID[session.ID]
 		if found && current.ContentHash == contentHash && current.RolloutPath == session.Path {
@@ -90,11 +131,16 @@ func Build(ctx context.Context, home string, store Store) (Result, error) {
 			continue
 		}
 
-		conversation, err := codex.ReadConversationContext(ctx, session.Path)
+		conversationStart := time.Now()
+		conversation, conversationBytes, err := codex.ReadConversationContextMeasured(ctx, session.Path)
+		result.Profile.ConversationDecode += time.Since(conversationStart)
+		result.Profile.ConversationBytes += conversationBytes
 		if err != nil {
 			result.Warnings = append(result.Warnings, fmt.Errorf("%s: read conversation: %w", session.Path, err))
 			continue
 		}
+		result.Profile.FilesDecoded++
+		result.Profile.MessagesDecoded += len(conversation)
 
 		indexedMessages := make([]index.Message, 0, len(conversation))
 		for ordinal, message := range conversation {
@@ -134,6 +180,7 @@ func Build(ctx context.Context, home string, store Store) (Result, error) {
 		return result, fmt.Errorf("replace indexed session batch: %w", err)
 	}
 
+	staleStart := time.Now()
 	if len(warnings) == 0 {
 		for _, indexedSession := range indexedSessions {
 			if err := ctx.Err(); err != nil {
@@ -148,6 +195,7 @@ func Build(ctx context.Context, home string, store Store) (Result, error) {
 			result.Deleted++
 		}
 	}
+	result.Profile.StaleCleanup = time.Since(staleStart)
 
 	return result, nil
 }
@@ -157,20 +205,26 @@ func hashRollout(path string) (string, error) {
 }
 
 func hashRolloutContext(ctx context.Context, path string) (string, error) {
+	hash, _, err := hashRolloutContextMeasured(ctx, path)
+	return hash, err
+}
+
+func hashRolloutContextMeasured(ctx context.Context, path string) (string, int64, error) {
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return "", 0, err
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	defer file.Close()
 
 	hash := sha256.New()
-	if _, err := io.Copy(hash, contextReader{ctx: ctx, reader: file}); err != nil {
-		return "", err
+	bytesRead, err := io.Copy(hash, contextReader{ctx: ctx, reader: file})
+	if err != nil {
+		return "", bytesRead, err
 	}
-	return contentHashVersion + ":sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+	return contentHashVersion + ":sha256:" + hex.EncodeToString(hash.Sum(nil)), bytesRead, nil
 }
 
 type contextReader struct {

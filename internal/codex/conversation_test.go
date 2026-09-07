@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -102,5 +103,24 @@ func TestReadConversationIgnoresMalformedUnrelatedLine(t *testing.T) {
 	}
 	if len(messages) != 1 || messages[0].Text != "still works" {
 		t.Fatalf("messages = %#v", messages)
+	}
+}
+
+func TestReadConversationContextMeasuredReportsDecoderBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	content := `{"type":"event_msg","payload":{"type":"user_message","message":"measured"}}` + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	messages, bytesRead, err := ReadConversationContextMeasured(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("messages = %#v", messages)
+	}
+	if bytesRead != int64(len(content)) {
+		t.Fatalf("bytes read = %d, want %d", bytesRead, len(content))
 	}
 }

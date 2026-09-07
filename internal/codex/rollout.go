@@ -2,8 +2,8 @@ package codex
 
 import (
 	"bufio"
-	"context"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,15 +13,33 @@ import (
 type recordVisitor func(record) (stop bool, err error)
 
 func visitRolloutFileContext(ctx context.Context, path string, visit recordVisitor) error {
+	_, err := visitRolloutFileContextMeasured(ctx, path, visit)
+	return err
+}
+
+func visitRolloutFileContextMeasured(ctx context.Context, path string, visit recordVisitor) (int64, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return 0, err
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer file.Close()
-	return visitRolloutContext(ctx, file, visit)
+	reader := &byteCountingReader{reader: file}
+	err = visitRolloutContext(ctx, reader, visit)
+	return reader.bytesRead, err
+}
+
+type byteCountingReader struct {
+	reader    io.Reader
+	bytesRead int64
+}
+
+func (r *byteCountingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.bytesRead += int64(n)
+	return n, err
 }
 
 func visitRollout(input io.Reader, visit recordVisitor) error {

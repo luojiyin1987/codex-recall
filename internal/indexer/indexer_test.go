@@ -118,6 +118,12 @@ func TestBuildSkipsUnchangedContent(t *testing.T) {
 	if store.replacements != 1 {
 		t.Fatalf("replacements = %d, want 1", store.replacements)
 	}
+	if second.Profile.FilesHashed != 1 || second.Profile.HashBytes == 0 {
+		t.Fatalf("unchanged profile = %#v", second.Profile)
+	}
+	if second.Profile.FilesDecoded != 0 || second.Profile.MessagesDecoded != 0 || second.Profile.BatchesWritten != 0 {
+		t.Fatalf("unchanged profile reported decode or write work: %#v", second.Profile)
+	}
 }
 
 func TestBuildReindexesChangedContent(t *testing.T) {
@@ -159,6 +165,18 @@ func TestBuildReindexesChangedContent(t *testing.T) {
 	messages := store.messages["session-1"]
 	if len(messages) != 3 || messages[2].Text != "changed" {
 		t.Fatalf("messages = %#v", messages)
+	}
+	if result.Profile.FilesHashed != 1 || result.Profile.FilesDecoded != 1 {
+		t.Fatalf("changed profile file counts = %#v", result.Profile)
+	}
+	if result.Profile.MessagesDecoded != 3 || result.Profile.BatchesWritten != 1 {
+		t.Fatalf("changed profile work counts = %#v", result.Profile)
+	}
+	if result.Profile.HashBytes == 0 || result.Profile.ConversationBytes != result.Profile.HashBytes {
+		t.Fatalf("changed profile byte counts = %#v", result.Profile)
+	}
+	if result.Profile.Total == 0 {
+		t.Fatal("changed profile did not record total time")
 	}
 }
 
@@ -239,7 +257,6 @@ func TestHashRolloutIsStableAndVersioned(t *testing.T) {
 		t.Fatalf("hash length = %d", len(first))
 	}
 }
-
 
 func TestBuildDeletesStaleIndexedSessionsWhenCatalogIsClean(t *testing.T) {
 	home := t.TempDir()

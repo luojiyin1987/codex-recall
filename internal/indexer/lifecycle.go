@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/luojiyin1987/codex-recall/internal/index"
 )
@@ -23,6 +24,16 @@ type RefreshOptions struct {
 type RefreshResult struct {
 	DatabasePath string
 	Result
+	Profile RefreshProfile
+}
+
+// RefreshProfile records lifecycle work around the index build.
+type RefreshProfile struct {
+	Prepare       time.Duration
+	DatabaseOpen  time.Duration
+	Build         BuildProfile
+	DatabaseClose time.Duration
+	Total         time.Duration
 }
 
 // DefaultIndexPath returns the derived SQLite index path for a Codex home.
@@ -34,6 +45,7 @@ func DefaultIndexPath(home string) string {
 // Refresh opens the derived SQLite index, incrementally rebuilds it from Codex
 // rollouts, and closes it before returning.
 func Refresh(ctx context.Context, home string, options RefreshOptions) (RefreshResult, error) {
+	totalStart := time.Now()
 	home = strings.TrimSpace(home)
 	if home == "" {
 		return RefreshResult{}, errors.New("codex home must not be empty")
@@ -45,20 +57,34 @@ func Refresh(ctx context.Context, home string, options RefreshOptions) (RefreshR
 		databasePath = DefaultIndexPath(home)
 	}
 
-	if err := prepareIndexParent(databasePath, usingDefaultPath); err != nil {
-		return RefreshResult{DatabasePath: databasePath}, err
+	prepareStart := time.Now()
+	prepareErr := prepareIndexParent(databasePath, usingDefaultPath)
+	prepareDuration := time.Since(prepareStart)
+	if prepareErr != nil {
+		return RefreshResult{DatabasePath: databasePath, Profile: RefreshProfile{Prepare: prepareDuration, Total: time.Since(totalStart)}}, prepareErr
 	}
 
+	openStart := time.Now()
 	store, err := index.OpenSQLite(databasePath)
+	openDuration := time.Since(openStart)
 	if err != nil {
-		return RefreshResult{DatabasePath: databasePath}, fmt.Errorf("open derived index: %w", err)
+		return RefreshResult{DatabasePath: databasePath, Profile: RefreshProfile{Prepare: prepareDuration, DatabaseOpen: openDuration, Total: time.Since(totalStart)}}, fmt.Errorf("open derived index: %w", err)
 	}
 
 	buildResult, buildErr := Build(ctx, home, store)
+	closeStart := time.Now()
 	closeErr := store.Close()
+	closeDuration := time.Since(closeStart)
 	result := RefreshResult{
 		DatabasePath: databasePath,
 		Result:       buildResult,
+		Profile: RefreshProfile{
+			Prepare:       prepareDuration,
+			DatabaseOpen:  openDuration,
+			Build:         buildResult.Profile,
+			DatabaseClose: closeDuration,
+			Total:         time.Since(totalStart),
+		},
 	}
 
 	switch {
