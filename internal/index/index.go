@@ -33,6 +33,21 @@ type SessionReplacement struct {
 	Messages []Message
 }
 
+// WriteProfile records the SQLite work performed while publishing one batch
+// of session replacements. It is diagnostic evidence only and does not change
+// transaction or durability semantics.
+type WriteProfile struct {
+	Validation       time.Duration
+	TransactionBegin time.Duration
+	StatementPrepare time.Duration
+	SessionUpsert    time.Duration
+	FTSDelete        time.Duration
+	MessageDelete    time.Duration
+	MessageInsert    time.Duration
+	FTSInsert        time.Duration
+	Commit           time.Duration
+}
+
 type SearchOptions struct {
 	Query   string
 	Limit   int
