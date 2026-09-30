@@ -183,7 +183,8 @@ func (s *SQLiteIndex) ReplaceSessions(ctx context.Context, replacements []Sessio
 
 // ReplaceSessionsWithProfile is ReplaceSessions with diagnostic timing for the
 // individual SQLite write phases. The profile does not alter write semantics.
-func (s *SQLiteIndex) ReplaceSessionsWithProfile(ctx context.Context, replacements []SessionReplacement) (profile WriteProfile, returnErr error) {
+func (s *SQLiteIndex) ReplaceSessionsWithProfile(ctx context.Context, replacements []SessionReplacement) (WriteProfile, error) {
+	var profile WriteProfile
 	if len(replacements) == 0 {
 		return profile, nil
 	}
