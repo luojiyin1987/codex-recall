@@ -25,6 +25,10 @@ type Store interface {
 	DeleteSession(ctx context.Context, id string) error
 }
 
+type profiledStore interface {
+	ReplaceSessionsWithProfile(ctx context.Context, replacements []index.SessionReplacement) (index.WriteProfile, error)
+}
+
 type BuildOptions struct {
 	FullHash bool
 }
@@ -40,28 +44,38 @@ type Result struct {
 
 // BuildProfile records work performed during one derived-index build.
 type BuildProfile struct {
-	Discovery                 time.Duration
-	MetadataParse             time.Duration
-	CatalogFinalize           time.Duration
-	IndexStateRead            time.Duration
-	Fingerprint               time.Duration
-	Hash                      time.Duration
-	ConversationDecode        time.Duration
-	DatabaseWrite             time.Duration
-	StaleCleanup              time.Duration
-	Total                     time.Duration
-	FilesHashed               int
-	HashBytes                 int64
-	FilesDecoded              int
-	ConversationBytes         int64
-	MessagesDecoded           int
-	BatchesWritten            int
-	RolloutFiles              int
-	MetadataUnreadableFiles   int
-	FilesFingerprinted        int
-	FingerprintFastPaths      int
-	FingerprintUpdates        int
-	FingerprintBatchesWritten int
+	Discovery                      time.Duration
+	MetadataParse                  time.Duration
+	CatalogFinalize                time.Duration
+	IndexStateRead                 time.Duration
+	Fingerprint                    time.Duration
+	Hash                           time.Duration
+	ConversationDecode             time.Duration
+	DatabaseWrite                  time.Duration
+	DatabaseWriteValidation        time.Duration
+	DatabaseWriteTxBegin           time.Duration
+	DatabaseWritePrepare           time.Duration
+	DatabaseWriteSessionUpsert     time.Duration
+	DatabaseWriteFTSDelete         time.Duration
+	DatabaseWriteMessageDelete     time.Duration
+	DatabaseWriteMessageInsert     time.Duration
+	DatabaseWriteFTSInsert         time.Duration
+	DatabaseWriteCommit            time.Duration
+	DatabaseWriteFingerprintUpdate time.Duration
+	StaleCleanup                   time.Duration
+	Total                          time.Duration
+	FilesHashed                    int
+	HashBytes                      int64
+	FilesDecoded                   int
+	ConversationBytes              int64
+	MessagesDecoded                int
+	BatchesWritten                 int
+	RolloutFiles                   int
+	MetadataUnreadableFiles        int
+	FilesFingerprinted             int
+	FingerprintFastPaths           int
+	FingerprintUpdates             int
+	FingerprintBatchesWritten      int
 }
 
 // Build incrementally refreshes a derived index from the logical Codex
@@ -115,8 +129,23 @@ func BuildWithOptions(ctx context.Context, home string, store Store, options Bui
 			return err
 		}
 		writeStart := time.Now()
-		err := store.ReplaceSessions(ctx, pending)
+		var writeProfile index.WriteProfile
+		var err error
+		if profiled, ok := store.(profiledStore); ok {
+			writeProfile, err = profiled.ReplaceSessionsWithProfile(ctx, pending)
+		} else {
+			err = store.ReplaceSessions(ctx, pending)
+		}
 		result.Profile.DatabaseWrite += time.Since(writeStart)
+		result.Profile.DatabaseWriteValidation += writeProfile.Validation
+		result.Profile.DatabaseWriteTxBegin += writeProfile.TransactionBegin
+		result.Profile.DatabaseWritePrepare += writeProfile.StatementPrepare
+		result.Profile.DatabaseWriteSessionUpsert += writeProfile.SessionUpsert
+		result.Profile.DatabaseWriteFTSDelete += writeProfile.FTSDelete
+		result.Profile.DatabaseWriteMessageDelete += writeProfile.MessageDelete
+		result.Profile.DatabaseWriteMessageInsert += writeProfile.MessageInsert
+		result.Profile.DatabaseWriteFTSInsert += writeProfile.FTSInsert
+		result.Profile.DatabaseWriteCommit += writeProfile.Commit
 		if err != nil {
 			return err
 		}
@@ -134,7 +163,9 @@ func BuildWithOptions(ctx context.Context, home string, store Store, options Bui
 		}
 		writeStart := time.Now()
 		err := store.UpsertSessions(ctx, pendingFingerprintUpdates)
-		result.Profile.DatabaseWrite += time.Since(writeStart)
+		writeDuration := time.Since(writeStart)
+		result.Profile.DatabaseWrite += writeDuration
+		result.Profile.DatabaseWriteFingerprintUpdate += writeDuration
 		if err != nil {
 			return err
 		}
