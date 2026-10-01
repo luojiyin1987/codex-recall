@@ -177,67 +177,95 @@ func (s *SQLiteIndex) ReplaceSession(ctx context.Context, session Session, messa
 // prepared once per batch so large refreshes avoid one commit and repeated
 // prepares for every individual session.
 func (s *SQLiteIndex) ReplaceSessions(ctx context.Context, replacements []SessionReplacement) error {
+	_, err := s.ReplaceSessionsWithProfile(ctx, replacements)
+	return err
+}
+
+// ReplaceSessionsWithProfile is ReplaceSessions with diagnostic timing for the
+// individual SQLite write phases. The profile does not alter write semantics.
+func (s *SQLiteIndex) ReplaceSessionsWithProfile(ctx context.Context, replacements []SessionReplacement) (WriteProfile, error) {
+	var profile WriteProfile
 	if len(replacements) == 0 {
-		return nil
-	}
-	for _, replacement := range replacements {
-		if err := validateSession(replacement.Session); err != nil {
-			return err
-		}
-		if err := validateMessages(replacement.Session.ID, replacement.Messages); err != nil {
-			return err
-		}
+		return profile, nil
 	}
 
+	validationStart := time.Now()
+	for _, replacement := range replacements {
+		if err := validateSession(replacement.Session); err != nil {
+			profile.Validation += time.Since(validationStart)
+			return profile, err
+		}
+		if err := validateMessages(replacement.Session.ID, replacement.Messages); err != nil {
+			profile.Validation += time.Since(validationStart)
+			return profile, err
+		}
+	}
+	profile.Validation += time.Since(validationStart)
+
+	beginStart := time.Now()
 	tx, err := s.db.BeginTx(ctx, nil)
+	profile.TransactionBegin += time.Since(beginStart)
 	if err != nil {
-		return fmt.Errorf("begin indexed session batch replacement: %w", err)
+		return profile, fmt.Errorf("begin indexed session batch replacement: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	prepareStart := time.Now()
 	upsertStmt, err := tx.PrepareContext(ctx, upsertSessionSQL)
+	profile.StatementPrepare += time.Since(prepareStart)
 	if err != nil {
-		return fmt.Errorf("prepare indexed session upsert: %w", err)
+		return profile, fmt.Errorf("prepare indexed session upsert: %w", err)
 	}
 	defer upsertStmt.Close()
 
+	prepareStart = time.Now()
 	deleteFTSStmt, err := tx.PrepareContext(ctx, "DELETE FROM messages_fts WHERE session_id = ?")
+	profile.StatementPrepare += time.Since(prepareStart)
 	if err != nil {
-		return fmt.Errorf("prepare lexical message delete: %w", err)
+		return profile, fmt.Errorf("prepare lexical message delete: %w", err)
 	}
 	defer deleteFTSStmt.Close()
 
+	prepareStart = time.Now()
 	deleteMessageStmt, err := tx.PrepareContext(ctx, "DELETE FROM messages WHERE session_id = ?")
+	profile.StatementPrepare += time.Since(prepareStart)
 	if err != nil {
-		return fmt.Errorf("prepare indexed message delete: %w", err)
+		return profile, fmt.Errorf("prepare indexed message delete: %w", err)
 	}
 	defer deleteMessageStmt.Close()
 
+	prepareStart = time.Now()
 	messageStmt, err := tx.PrepareContext(ctx, `
 INSERT INTO messages (session_id, ordinal, role, text, timestamp)
 VALUES (?, ?, ?, ?, ?)
 `)
+	profile.StatementPrepare += time.Since(prepareStart)
 	if err != nil {
-		return fmt.Errorf("prepare indexed message insert: %w", err)
+		return profile, fmt.Errorf("prepare indexed message insert: %w", err)
 	}
 	defer messageStmt.Close()
 
+	prepareStart = time.Now()
 	ftsStmt, err := tx.PrepareContext(ctx, `
 INSERT INTO messages_fts (session_id, ordinal, role, text)
 VALUES (?, ?, ?, ?)
 `)
+	profile.StatementPrepare += time.Since(prepareStart)
 	if err != nil {
-		return fmt.Errorf("prepare lexical message insert: %w", err)
+		return profile, fmt.Errorf("prepare lexical message insert: %w", err)
 	}
 	defer ftsStmt.Close()
 
 	for _, replacement := range replacements {
 		if err := ctx.Err(); err != nil {
-			return err
+			return profile, err
 		}
 		session := replacement.Session
-		if err := execPreparedUpsertSession(ctx, upsertStmt, session); err != nil {
-			return fmt.Errorf("upsert indexed session %q: %w", session.ID, err)
+		upsertStart := time.Now()
+		err := execPreparedUpsertSession(ctx, upsertStmt, session)
+		profile.SessionUpsert += time.Since(upsertStart)
+		if err != nil {
+			return profile, fmt.Errorf("upsert indexed session %q: %w", session.ID, err)
 		}
 		if err := replaceMessagesPrepared(
 			ctx,
@@ -247,15 +275,19 @@ VALUES (?, ?, ?, ?)
 			ftsStmt,
 			session.ID,
 			replacement.Messages,
+			&profile,
 		); err != nil {
-			return err
+			return profile, err
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit indexed session batch replacement: %w", err)
+	commitStart := time.Now()
+	err = tx.Commit()
+	profile.Commit += time.Since(commitStart)
+	if err != nil {
+		return profile, fmt.Errorf("commit indexed session batch replacement: %w", err)
 	}
-	return nil
+	return profile, nil
 }
 
 func execUpsertSession(ctx context.Context, execer sqlExecer, session Session) error {
@@ -298,11 +330,19 @@ func replaceMessagesPrepared(
 	ftsStmt *sql.Stmt,
 	sessionID string,
 	messages []Message,
+	profile *WriteProfile,
 ) error {
-	if _, err := deleteFTSStmt.ExecContext(ctx, sessionID); err != nil {
+	deleteStart := time.Now()
+	_, err := deleteFTSStmt.ExecContext(ctx, sessionID)
+	profile.FTSDelete += time.Since(deleteStart)
+	if err != nil {
 		return fmt.Errorf("clear lexical messages for session %q: %w", sessionID, err)
 	}
-	if _, err := deleteMessageStmt.ExecContext(ctx, sessionID); err != nil {
+
+	deleteStart = time.Now()
+	_, err = deleteMessageStmt.ExecContext(ctx, sessionID)
+	profile.MessageDelete += time.Since(deleteStart)
+	if err != nil {
 		return fmt.Errorf("clear indexed messages for session %q: %w", sessionID, err)
 	}
 
@@ -314,10 +354,17 @@ func replaceMessagesPrepared(
 		if message.Timestamp != nil {
 			timestamp = formatTime(*message.Timestamp)
 		}
-		if _, err := messageStmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text, timestamp); err != nil {
+		insertStart := time.Now()
+		_, err := messageStmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text, timestamp)
+		profile.MessageInsert += time.Since(insertStart)
+		if err != nil {
 			return fmt.Errorf("insert indexed message at ordinal %d for session %q: %w", message.Ordinal, sessionID, err)
 		}
-		if _, err := ftsStmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text); err != nil {
+
+		insertStart = time.Now()
+		_, err = ftsStmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text)
+		profile.FTSInsert += time.Since(insertStart)
+		if err != nil {
 			return fmt.Errorf("insert lexical message at ordinal %d for session %q: %w", message.Ordinal, sessionID, err)
 		}
 	}
