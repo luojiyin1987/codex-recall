@@ -29,6 +29,10 @@ ON CONFLICT(session_id) DO UPDATE SET
     indexed_at = excluded.indexed_at
 `
 
+const selectMessageRowIDsSQL = "SELECT rowid FROM messages WHERE session_id = ?"
+
+const deleteFTSMessageSQL = "DELETE FROM messages_fts WHERE rowid = ?"
+
 type SQLiteIndex struct {
 	db *sql.DB
 }
@@ -219,7 +223,15 @@ func (s *SQLiteIndex) ReplaceSessionsWithProfile(ctx context.Context, replacemen
 	defer upsertStmt.Close()
 
 	prepareStart = time.Now()
-	deleteFTSStmt, err := tx.PrepareContext(ctx, "DELETE FROM messages_fts WHERE session_id = ?")
+	selectMessageRowIDsStmt, err := tx.PrepareContext(ctx, selectMessageRowIDsSQL)
+	profile.StatementPrepare += time.Since(prepareStart)
+	if err != nil {
+		return profile, fmt.Errorf("prepare indexed message rowid select: %w", err)
+	}
+	defer selectMessageRowIDsStmt.Close()
+
+	prepareStart = time.Now()
+	deleteFTSStmt, err := tx.PrepareContext(ctx, deleteFTSMessageSQL)
 	profile.StatementPrepare += time.Since(prepareStart)
 	if err != nil {
 		return profile, fmt.Errorf("prepare lexical message delete: %w", err)
@@ -247,8 +259,8 @@ VALUES (?, ?, ?, ?, ?)
 
 	prepareStart = time.Now()
 	ftsStmt, err := tx.PrepareContext(ctx, `
-INSERT INTO messages_fts (session_id, ordinal, role, text)
-VALUES (?, ?, ?, ?)
+INSERT INTO messages_fts (rowid, session_id, ordinal, role, text)
+VALUES (?, ?, ?, ?, ?)
 `)
 	profile.StatementPrepare += time.Since(prepareStart)
 	if err != nil {
@@ -269,6 +281,7 @@ VALUES (?, ?, ?, ?)
 		}
 		if err := replaceMessagesPrepared(
 			ctx,
+			selectMessageRowIDsStmt,
 			deleteFTSStmt,
 			deleteMessageStmt,
 			messageStmt,
@@ -324,6 +337,7 @@ func execPreparedUpsertSession(ctx context.Context, stmt *sql.Stmt, session Sess
 
 func replaceMessagesPrepared(
 	ctx context.Context,
+	selectMessageRowIDsStmt *sql.Stmt,
 	deleteFTSStmt *sql.Stmt,
 	deleteMessageStmt *sql.Stmt,
 	messageStmt *sql.Stmt,
@@ -333,10 +347,10 @@ func replaceMessagesPrepared(
 	profile *WriteProfile,
 ) error {
 	deleteStart := time.Now()
-	_, err := deleteFTSStmt.ExecContext(ctx, sessionID)
+	err := deleteFTSMessagesPrepared(ctx, selectMessageRowIDsStmt, deleteFTSStmt, sessionID)
 	profile.FTSDelete += time.Since(deleteStart)
 	if err != nil {
-		return fmt.Errorf("clear lexical messages for session %q: %w", sessionID, err)
+		return err
 	}
 
 	deleteStart = time.Now()
@@ -355,14 +369,19 @@ func replaceMessagesPrepared(
 			timestamp = formatTime(*message.Timestamp)
 		}
 		insertStart := time.Now()
-		_, err := messageStmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text, timestamp)
+		insertResult, err := messageStmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text, timestamp)
+		if err != nil {
+			profile.MessageInsert += time.Since(insertStart)
+			return fmt.Errorf("insert indexed message at ordinal %d for session %q: %w", message.Ordinal, sessionID, err)
+		}
+		messageRowID, err := insertResult.LastInsertId()
 		profile.MessageInsert += time.Since(insertStart)
 		if err != nil {
-			return fmt.Errorf("insert indexed message at ordinal %d for session %q: %w", message.Ordinal, sessionID, err)
+			return fmt.Errorf("read indexed message rowid at ordinal %d for session %q: %w", message.Ordinal, sessionID, err)
 		}
 
 		insertStart = time.Now()
-		_, err = ftsStmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text)
+		_, err = ftsStmt.ExecContext(ctx, messageRowID, sessionID, message.Ordinal, message.Role, message.Text)
 		profile.FTSInsert += time.Since(insertStart)
 		if err != nil {
 			return fmt.Errorf("insert lexical message at ordinal %d for session %q: %w", message.Ordinal, sessionID, err)
@@ -372,8 +391,18 @@ func replaceMessagesPrepared(
 }
 
 func replaceMessagesTx(ctx context.Context, tx *sql.Tx, sessionID string, messages []Message) error {
-	if _, err := tx.ExecContext(ctx, "DELETE FROM messages_fts WHERE session_id = ?", sessionID); err != nil {
-		return fmt.Errorf("clear lexical messages for session %q: %w", sessionID, err)
+	selectMessageRowIDsStmt, err := tx.PrepareContext(ctx, selectMessageRowIDsSQL)
+	if err != nil {
+		return fmt.Errorf("prepare indexed message rowid select: %w", err)
+	}
+	defer selectMessageRowIDsStmt.Close()
+	deleteFTSStmt, err := tx.PrepareContext(ctx, deleteFTSMessageSQL)
+	if err != nil {
+		return fmt.Errorf("prepare lexical message delete: %w", err)
+	}
+	defer deleteFTSStmt.Close()
+	if err := deleteFTSMessagesPrepared(ctx, selectMessageRowIDsStmt, deleteFTSStmt, sessionID); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM messages WHERE session_id = ?", sessionID); err != nil {
 		return fmt.Errorf("clear indexed messages for session %q: %w", sessionID, err)
@@ -389,8 +418,8 @@ VALUES (?, ?, ?, ?, ?)
 	defer messageStmt.Close()
 
 	ftsStmt, err := tx.PrepareContext(ctx, `
-INSERT INTO messages_fts (session_id, ordinal, role, text)
-VALUES (?, ?, ?, ?)
+INSERT INTO messages_fts (rowid, session_id, ordinal, role, text)
+VALUES (?, ?, ?, ?, ?)
 `)
 	if err != nil {
 		return fmt.Errorf("prepare lexical message insert: %w", err)
@@ -402,11 +431,44 @@ VALUES (?, ?, ?, ?)
 		if message.Timestamp != nil {
 			timestamp = formatTime(*message.Timestamp)
 		}
-		if _, err := messageStmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text, timestamp); err != nil {
+		insertResult, err := messageStmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text, timestamp)
+		if err != nil {
 			return fmt.Errorf("insert indexed message at ordinal %d: %w", message.Ordinal, err)
 		}
-		if _, err := ftsStmt.ExecContext(ctx, sessionID, message.Ordinal, message.Role, message.Text); err != nil {
+		messageRowID, err := insertResult.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("read indexed message rowid at ordinal %d: %w", message.Ordinal, err)
+		}
+		if _, err := ftsStmt.ExecContext(ctx, messageRowID, sessionID, message.Ordinal, message.Role, message.Text); err != nil {
 			return fmt.Errorf("insert lexical message at ordinal %d: %w", message.Ordinal, err)
+		}
+	}
+	return nil
+}
+
+func deleteFTSMessagesPrepared(ctx context.Context, selectRowIDsStmt, deleteFTSStmt *sql.Stmt, sessionID string) error {
+	rows, err := selectRowIDsStmt.QueryContext(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("list lexical message rowids for session %q: %w", sessionID, err)
+	}
+	var rowIDs []int64
+	for rows.Next() {
+		var rowID int64
+		if err := rows.Scan(&rowID); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan lexical message rowid for session %q: %w", sessionID, err)
+		}
+		rowIDs = append(rowIDs, rowID)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close lexical message rowids for session %q: %w", sessionID, err)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("list lexical message rowids for session %q: %w", sessionID, err)
+	}
+	for _, rowID := range rowIDs {
+		if _, err := deleteFTSStmt.ExecContext(ctx, rowID); err != nil {
+			return fmt.Errorf("clear lexical message rowid %d for session %q: %w", rowID, sessionID, err)
 		}
 	}
 	return nil
@@ -498,8 +560,18 @@ func (s *SQLiteIndex) DeleteSession(ctx context.Context, id string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx, "DELETE FROM messages_fts WHERE session_id = ?", id); err != nil {
-		return fmt.Errorf("delete lexical messages for session %q: %w", id, err)
+	selectMessageRowIDsStmt, err := tx.PrepareContext(ctx, selectMessageRowIDsSQL)
+	if err != nil {
+		return fmt.Errorf("prepare indexed message rowid select: %w", err)
+	}
+	defer selectMessageRowIDsStmt.Close()
+	deleteFTSStmt, err := tx.PrepareContext(ctx, deleteFTSMessageSQL)
+	if err != nil {
+		return fmt.Errorf("prepare lexical message delete: %w", err)
+	}
+	defer deleteFTSStmt.Close()
+	if err := deleteFTSMessagesPrepared(ctx, selectMessageRowIDsStmt, deleteFTSStmt, id); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE session_id = ?", id); err != nil {
 		return fmt.Errorf("delete indexed session %q: %w", id, err)
