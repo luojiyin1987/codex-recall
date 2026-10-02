@@ -304,3 +304,95 @@ func TestSQLiteSearchShortLiteralFallback(t *testing.T) {
 		})
 	}
 }
+
+
+func TestSQLiteSearchReplacementAndDeleteRemainCorrectAfterVacuum(t *testing.T) {
+	idx := openTestIndex(t)
+	ctx := context.Background()
+
+	filler := testSearchSession("vacuum-filler", "/work/demo", "demo", "cli", time.Now().UTC())
+	target := testSearchSession("vacuum-target", "/work/demo", "demo", "cli", time.Now().UTC())
+
+	var fillerMessages []Message
+	for ordinal := 0; ordinal < 8; ordinal++ {
+		fillerMessages = append(fillerMessages, Message{
+			Ordinal: ordinal,
+			Role:    "assistant",
+			Text:    "filler message",
+		})
+	}
+	if err := idx.ReplaceSession(ctx, filler, fillerMessages); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.ReplaceSession(ctx, target, []Message{{
+		Ordinal: 0,
+		Role:    "assistant",
+		Text:    "old vacuum searchable token",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	var messageIDBefore int64
+	if err := idx.db.QueryRow(
+		"SELECT message_id FROM messages WHERE session_id = ? AND ordinal = 0",
+		target.ID,
+	).Scan(&messageIDBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := idx.DeleteSession(ctx, filler.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := idx.db.ExecContext(ctx, "VACUUM"); err != nil {
+		t.Fatal(err)
+	}
+
+	var messageIDAfter int64
+	if err := idx.db.QueryRow(
+		"SELECT message_id FROM messages WHERE session_id = ? AND ordinal = 0",
+		target.ID,
+	).Scan(&messageIDAfter); err != nil {
+		t.Fatal(err)
+	}
+	if messageIDAfter != messageIDBefore {
+		t.Fatalf("message_id changed across VACUUM: before=%d after=%d", messageIDBefore, messageIDAfter)
+	}
+
+	if err := idx.ReplaceMessages(ctx, target.ID, []Message{{
+		Ordinal: 0,
+		Role:    "assistant",
+		Text:    "new vacuum searchable token",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	oldMatches, err := idx.Search(ctx, SearchOptions{Query: "old vacuum searchable", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(oldMatches) != 0 {
+		t.Fatalf("stale matches after VACUUM replacement = %#v", oldMatches)
+	}
+
+	newMatches, err := idx.Search(ctx, SearchOptions{Query: "new vacuum searchable", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(newMatches) != 1 || newMatches[0].Session.ID != target.ID {
+		t.Fatalf("replacement matches after VACUUM = %#v", newMatches)
+	}
+
+	if _, err := idx.db.ExecContext(ctx, "VACUUM"); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.DeleteSession(ctx, target.ID); err != nil {
+		t.Fatal(err)
+	}
+	newMatches, err = idx.Search(ctx, SearchOptions{Query: "new vacuum searchable", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(newMatches) != 0 {
+		t.Fatalf("deleted session remained searchable after VACUUM = %#v", newMatches)
+	}
+}

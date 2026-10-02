@@ -182,7 +182,7 @@ INSERT INTO sessions (
 	}
 }
 
-func TestOpenSQLiteMigratesV4FTSRowsToMessageRowIDs(t *testing.T) {
+func TestOpenSQLiteMigratesV4ToStableMessageIDs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v4.db")
 	db, err := sql.Open(sqliteDriverName, path)
 	if err != nil {
@@ -247,11 +247,23 @@ VALUES (?, ?, ?, ?)
 	defer idx.Close()
 
 	assertSchemaVersion(t, idx.db, schemaVersion)
+	var stableIDs int
+	if err := idx.db.QueryRow(`
+SELECT count(*)
+FROM messages
+WHERE message_id IN (17, 42)
+`).Scan(&stableIDs); err != nil {
+		t.Fatal(err)
+	}
+	if stableIDs != 2 {
+		t.Fatalf("preserved stable message ids = %d, want 2", stableIDs)
+	}
+
 	var alignedRows int
 	if err := idx.db.QueryRow(`
 SELECT count(*)
 FROM messages AS m
-JOIN messages_fts AS f ON f.rowid = m.rowid
+JOIN messages_fts AS f ON f.rowid = m.message_id
 WHERE f.session_id = m.session_id
   AND f.ordinal = m.ordinal
   AND f.role = m.role
