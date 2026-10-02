@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/luojiyin1987/codex-recall/internal/textutil"
 )
@@ -522,4 +524,148 @@ func TestDecodeConversationSelectiveMatchesCurrent(t *testing.T) {
 			t.Fatalf("messages[%d] = %#v, want %#v", i, got[i], want[i])
 		}
 	}
+}
+
+// BenchmarkConversationDecodeCorpusStrategies runs the A/B over every rollout
+// file under one corpus directory. Set CODEX_RECALL_DECODE_BENCH_DIR to the
+// Codex sessions directory. Use -benchtime=1x. The setup reads the whole
+// corpus once, so the timed passes run from the page cache. This benchmark is
+// skipped by default.
+func BenchmarkConversationDecodeCorpusStrategies(b *testing.B) {
+	dir := os.Getenv("CODEX_RECALL_DECODE_BENCH_DIR")
+	if dir == "" {
+		b.Skip("set CODEX_RECALL_DECODE_BENCH_DIR to the Codex sessions directory")
+	}
+	files, totalBytes, excluded, err := collectDecodeBenchmarkCorpus(dir)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if len(files) == 0 {
+		b.Skip("no rollout files under " + dir)
+	}
+	if excluded > 0 {
+		b.Logf("skipped %d rollout file(s) modified in the last %s", excluded, decodeBenchmarkQuietPeriod)
+	}
+	// Verify semantic equivalence over the whole corpus outside the timer.
+	referenceMessages := verifyCorpusDecodeEquivalence(b, files)
+
+	b.Run("current", func(b *testing.B) {
+		benchmarkCorpusStrategy(b, files, totalBytes, referenceMessages, decodeCorpusCurrent)
+	})
+	b.Run("selective", func(b *testing.B) {
+		benchmarkCorpusStrategy(b, files, totalBytes, referenceMessages, decodeCorpusSelective)
+	})
+}
+
+type corpusDecodeFunc func(ctx context.Context, path string) (int, error)
+
+func decodeCorpusCurrent(ctx context.Context, path string) (int, error) {
+	messages, _, err := ReadConversationContextMeasured(ctx, path)
+	if err != nil {
+		return 0, err
+	}
+	return len(messages), nil
+}
+
+func decodeCorpusSelective(ctx context.Context, path string) (int, error) {
+	messages, _, err := decodeConversationSelective(ctx, path)
+	if err != nil {
+		return 0, err
+	}
+	return len(messages), nil
+}
+
+func benchmarkCorpusStrategy(b *testing.B, files []string, totalBytes int64, wantMessages int, decode corpusDecodeFunc) {
+	b.Helper()
+	b.SetBytes(totalBytes)
+	b.ReportAllocs()
+	b.ResetTimer()
+	var messages int
+	for i := 0; i < b.N; i++ {
+		messages = 0
+		for _, path := range files {
+			decoded, err := decode(context.Background(), path)
+			if err != nil {
+				b.Fatal(err)
+			}
+			messages += decoded
+		}
+	}
+	b.StopTimer()
+	if messages != wantMessages {
+		b.Fatalf("decoded %d messages, want %d", messages, wantMessages)
+	}
+	b.ReportMetric(float64(totalBytes), "corpus-bytes")
+	b.ReportMetric(float64(len(files)), "files/op")
+	b.ReportMetric(float64(messages), "messages/op")
+}
+
+// verifyCorpusDecodeEquivalence compares both decoders message by message on
+// every file. It checks the count, the Role, the Text, the Timestamp, and the
+// order. It returns the total message count. It runs outside the timer.
+func verifyCorpusDecodeEquivalence(b *testing.B, files []string) int {
+	b.Helper()
+	total := 0
+	for _, path := range files {
+		current, _, err := ReadConversationContextMeasured(context.Background(), path)
+		if err != nil {
+			b.Fatalf("%s: current decode: %v", path, err)
+		}
+		selective, _, err := decodeConversationSelective(context.Background(), path)
+		if err != nil {
+			b.Fatalf("%s: selective decode: %v", path, err)
+		}
+		if len(current) != len(selective) {
+			b.Fatalf("%s: message count current=%d selective=%d", path, len(current), len(selective))
+		}
+		for i := range current {
+			if current[i] == selective[i] {
+				continue
+			}
+			b.Fatalf("%s: message %d differs:\n current:   role=%q text=%q timestamp=%s\n selective: role=%q text=%q timestamp=%s",
+				path, i,
+				current[i].Role, current[i].Text, current[i].Timestamp.Format(time.RFC3339Nano),
+				selective[i].Role, selective[i].Text, selective[i].Timestamp.Format(time.RFC3339Nano))
+		}
+		total += len(current)
+	}
+	return total
+}
+
+// decodeBenchmarkQuietPeriod excludes rollout files that are still being
+// written. The active session rollout grows during the run, so it breaks the
+// equivalence check and the exact message count.
+const decodeBenchmarkQuietPeriod = 15 * time.Minute
+
+// collectDecodeBenchmarkCorpus lists the settled rollout files under dir and
+// sums their sizes. It does not read file content. It skips files modified
+// inside decodeBenchmarkQuietPeriod and returns the skipped count.
+func collectDecodeBenchmarkCorpus(dir string) ([]string, int64, int, error) {
+	files := make([]string, 0)
+	var totalBytes int64
+	excluded := 0
+	cutoff := time.Now().Add(-decodeBenchmarkQuietPeriod)
+	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.ModTime().After(cutoff) {
+			excluded++
+			return nil
+		}
+		files = append(files, path)
+		totalBytes += info.Size()
+		return nil
+	})
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	return files, totalBytes, excluded, nil
 }
