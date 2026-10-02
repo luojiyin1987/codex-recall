@@ -109,6 +109,38 @@ func BenchmarkSQLiteWritePhases(b *testing.B) {
 	}
 }
 
+func BenchmarkSQLiteExistingSessionReplacement(b *testing.B) {
+	for _, messageCount := range []int{20, 100, 500, 2000} {
+		b.Run(fmt.Sprintf("messages-%d", messageCount), func(b *testing.B) {
+			replacements := benchmarkSessionReplacements(1, messageCount, 1024)
+			idx, err := OpenSQLite(filepath.Join(b.TempDir(), "replacement.db"))
+			if err != nil {
+				b.Fatal(err)
+			}
+			defer idx.Close()
+			if _, err := idx.ReplaceSessionsWithProfile(context.Background(), replacements); err != nil {
+				b.Fatal(err)
+			}
+
+			var totals writeBenchmarkTotals
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				profile, err := idx.ReplaceSessionsWithProfile(context.Background(), replacements)
+				if err != nil {
+					b.Fatal(err)
+				}
+				totals.add(profile)
+			}
+			b.StopTimer()
+
+			b.ReportMetric(float64(messageCount), "messages/op")
+			b.ReportMetric(float64(messageCount*1024), "message-bytes/op")
+			totals.report(b)
+		})
+	}
+}
+
 func benchmarkSessionReplacements(sessionCount, messageCount, messageBytes int) []SessionReplacement {
 	baseTime := time.Date(2026, 9, 4, 8, 0, 0, 0, time.UTC)
 	baseText := "codex recall sqlite trigram indexing benchmark conversation with source maps agent runtime errors commands paths and identifiers "

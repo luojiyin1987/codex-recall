@@ -181,3 +181,97 @@ INSERT INTO sessions (
 		t.Fatalf("migrated fingerprint = (%d, %d)", session.RolloutSize, session.RolloutMTimeNS)
 	}
 }
+
+func TestOpenSQLiteMigratesV4ToStableMessageIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v4.db")
+	db, err := sql.Open(sqliteDriverName, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range schemaStatements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, version := range []int{2, 3, 4} {
+		for _, statement := range schemaMigrations[version] {
+			if _, err := db.Exec(statement); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := db.Exec("PRAGMA user_version = 4"); err != nil {
+		t.Fatal(err)
+	}
+
+	timestamp := time.Date(2026, 9, 30, 4, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+	for _, sessionID := range []string{"legacy-v4-a", "legacy-v4-b"} {
+		if _, err := db.Exec(`
+INSERT INTO sessions (
+    session_id, timestamp, cwd, project, source, rollout_path, content_hash,
+    indexed_at, rollout_size, rollout_mtime_ns
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, sessionID, timestamp, "/work/legacy", "legacy", "cli", "/codex/"+sessionID+".jsonl", "hash-"+sessionID, timestamp, 1, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, row := range []struct {
+		rowID     int
+		sessionID string
+		text      string
+	}{
+		{rowID: 17, sessionID: "legacy-v4-a", text: "first migration needle"},
+		{rowID: 42, sessionID: "legacy-v4-b", text: "second migration needle"},
+	} {
+		if _, err := db.Exec(`
+INSERT INTO messages (rowid, session_id, ordinal, role, text, timestamp)
+VALUES (?, ?, ?, ?, ?, ?)
+`, row.rowID, row.sessionID, 0, "assistant", row.text, timestamp); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`
+INSERT INTO messages_fts (session_id, ordinal, role, text)
+VALUES (?, ?, ?, ?)
+`, row.sessionID, 0, "assistant", row.text); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+
+	assertSchemaVersion(t, idx.db, schemaVersion)
+	var stableIDs int
+	if err := idx.db.QueryRow(`
+SELECT count(*)
+FROM messages
+WHERE message_id IN (17, 42)
+`).Scan(&stableIDs); err != nil {
+		t.Fatal(err)
+	}
+	if stableIDs != 2 {
+		t.Fatalf("preserved stable message ids = %d, want 2", stableIDs)
+	}
+
+	var alignedRows int
+	if err := idx.db.QueryRow(`
+SELECT count(*)
+FROM messages AS m
+JOIN messages_fts AS f ON f.rowid = m.message_id
+WHERE f.session_id = m.session_id
+  AND f.ordinal = m.ordinal
+  AND f.role = m.role
+  AND f.text = m.text
+`).Scan(&alignedRows); err != nil {
+		t.Fatal(err)
+	}
+	if alignedRows != 2 {
+		t.Fatalf("aligned FTS rows = %d, want 2", alignedRows)
+	}
+}

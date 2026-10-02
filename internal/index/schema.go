@@ -1,6 +1,6 @@
 package index
 
-const schemaVersion = 4
+const schemaVersion = 5
 
 var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS sessions (
@@ -70,5 +70,40 @@ FROM messages AS m`,
 	4: {
 		`ALTER TABLE sessions ADD COLUMN rollout_size INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE sessions ADD COLUMN rollout_mtime_ns INTEGER NOT NULL DEFAULT 0`,
+	},
+	5: {
+		`DROP TABLE IF EXISTS messages_fts`,
+		`CREATE TABLE messages_v5 (
+    message_id INTEGER PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    ordinal    INTEGER NOT NULL,
+    role       TEXT NOT NULL,
+    text       TEXT NOT NULL,
+    timestamp  TEXT,
+
+    UNIQUE (session_id, ordinal),
+    FOREIGN KEY (session_id)
+        REFERENCES sessions(session_id)
+        ON DELETE CASCADE
+)`,
+		`INSERT INTO messages_v5 (
+    message_id, session_id, ordinal, role, text, timestamp
+)
+SELECT rowid, session_id, ordinal, role, text, timestamp
+FROM messages`,
+		`DROP TABLE messages`,
+		`ALTER TABLE messages_v5 RENAME TO messages`,
+		`CREATE INDEX idx_messages_session
+    ON messages(session_id)`,
+		`CREATE VIRTUAL TABLE messages_fts USING fts5(
+    session_id UNINDEXED,
+    ordinal UNINDEXED,
+    role UNINDEXED,
+    text,
+    tokenize = 'trigram'
+)`,
+		`INSERT INTO messages_fts (rowid, session_id, ordinal, role, text)
+SELECT m.message_id, m.session_id, m.ordinal, m.role, m.text
+FROM messages AS m`,
 	},
 }
