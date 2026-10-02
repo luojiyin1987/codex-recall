@@ -203,7 +203,10 @@ func conversationText(rec record) (string, string) {
 	switch rec.Type {
 	case "response_item":
 		var message responseMessage
-		if err := json.Unmarshal(rec.Payload, &message); err != nil || message.Type != "message" {
+		if err := json.Unmarshal(rec.Payload, &message); err != nil {
+			return "", ""
+		}
+		if !isConversationPayloadType(rec.Type, message.Type) {
 			return "", ""
 		}
 		if message.Role != "user" && message.Role != "assistant" {
@@ -219,22 +222,20 @@ func conversationText(rec record) (string, string) {
 
 	case "event_msg":
 		var event eventMessage
-		if err := json.Unmarshal(rec.Payload, &event); err != nil || strings.TrimSpace(event.Message) == "" {
+		if err := json.Unmarshal(rec.Payload, &event); err != nil {
 			return "", ""
 		}
-		switch event.Type {
-		case "user_message":
-			return "user", event.Message
-		case "agent_message":
-			return "assistant", event.Message
-		default:
+		if !isConversationPayloadType(rec.Type, event.Type) {
 			return "", ""
 		}
+		if strings.TrimSpace(event.Message) == "" {
+			return "", ""
+		}
+		return conversationEventRole(event.Type), event.Message
 	default:
 		return "", ""
 	}
 }
-
 
 func excerptAroundMatch(text string, matchStart, matchEnd int) string {
 	runes := []rune(text)
