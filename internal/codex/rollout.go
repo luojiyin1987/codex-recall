@@ -18,6 +18,13 @@ func visitRolloutFileContext(ctx context.Context, path string, visit recordVisit
 }
 
 func visitRolloutFileContextMeasured(ctx context.Context, path string, visit recordVisitor) (int64, error) {
+	return visitRolloutFileContextFilteredMeasured(ctx, path, nil, visit)
+}
+
+// visitRolloutFileContextFilteredMeasured counts bytes read and decodes only
+// the records that shouldDecode returns true for. A nil shouldDecode decodes
+// every record.
+func visitRolloutFileContextFilteredMeasured(ctx context.Context, path string, shouldDecode func([]byte) bool, visit recordVisitor) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -27,7 +34,7 @@ func visitRolloutFileContextMeasured(ctx context.Context, path string, visit rec
 	}
 	defer file.Close()
 	reader := &byteCountingReader{reader: file}
-	err = visitRolloutContext(ctx, reader, visit)
+	err = visitRolloutContextFiltered(ctx, reader, shouldDecode, visit)
 	return reader.bytesRead, err
 }
 
@@ -47,6 +54,14 @@ func visitRollout(input io.Reader, visit recordVisitor) error {
 }
 
 func visitRolloutContext(ctx context.Context, input io.Reader, visit recordVisitor) error {
+	return visitRolloutContextFiltered(ctx, input, nil, visit)
+}
+
+// visitRolloutContextFiltered reads JSONL records. It calls shouldDecode with
+// each trimmed line before the envelope decode. It skips the line when
+// shouldDecode returns false. A nil shouldDecode decodes every line. The filter
+// lets the conversation decoder skip the payload copy for irrelevant records.
+func visitRolloutContextFiltered(ctx context.Context, input io.Reader, shouldDecode func([]byte) bool, visit recordVisitor) error {
 	reader := bufio.NewReader(input)
 	for {
 		if err := ctx.Err(); err != nil {
@@ -54,14 +69,17 @@ func visitRolloutContext(ctx context.Context, input io.Reader, visit recordVisit
 		}
 		line, readErr := reader.ReadBytes('\n')
 		if len(line) > 0 {
-			var rec record
-			if json.Unmarshal(bytes.TrimSpace(line), &rec) == nil {
-				stop, err := visit(rec)
-				if err != nil {
-					return err
-				}
-				if stop {
-					return nil
+			trimmed := bytes.TrimSpace(line)
+			if shouldDecode == nil || shouldDecode(trimmed) {
+				var rec record
+				if json.Unmarshal(trimmed, &rec) == nil {
+					stop, err := visit(rec)
+					if err != nil {
+						return err
+					}
+					if stop {
+						return nil
+					}
 				}
 			}
 		}
