@@ -2,7 +2,9 @@ package codex
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +26,17 @@ type decodeBenchmarkShape struct {
 	toolBytes    int
 }
 
+// decodeBenchmarkShapes returns the shared synthetic files. message-heavy
+// stresses indexable text. tool-heavy stresses payload bytes that the decoder
+// reads but never indexes.
+func decodeBenchmarkShapes() []decodeBenchmarkShape {
+	return []decodeBenchmarkShape{
+		{name: "mixed", turns: 120, messageBytes: 2048, toolBytes: 8192},
+		{name: "message-heavy", turns: 120, messageBytes: 8192, toolBytes: 1024},
+		{name: "tool-heavy", turns: 120, messageBytes: 512, toolBytes: 16384},
+	}
+}
+
 // BenchmarkConversationDecodeLayers splits the decoder pipeline into layers.
 // Subtract adjacent layers to get incremental phase cost:
 //
@@ -36,13 +49,7 @@ type decodeBenchmarkShape struct {
 // Every layer reads the same file from the page cache. The scan-only layer
 // mirrors production: a bufio.Reader driven by ReadBytes('\n').
 func BenchmarkConversationDecodeLayers(b *testing.B) {
-	shapes := []decodeBenchmarkShape{
-		{name: "mixed", turns: 120, messageBytes: 2048, toolBytes: 8192},
-		{name: "message-heavy", turns: 120, messageBytes: 8192, toolBytes: 1024},
-		{name: "tool-heavy", turns: 120, messageBytes: 512, toolBytes: 16384},
-	}
-
-	for _, shape := range shapes {
+	for _, shape := range decodeBenchmarkShapes() {
 		path, size := writeDecodeBenchmarkRollout(b, shape)
 		records := countDecodeBenchmarkRecords(b, path)
 		messages := countDecodeBenchmarkMessages(b, path)
@@ -128,6 +135,180 @@ func BenchmarkConversationDecodeRealFile(b *testing.B) {
 		})
 		reportDecodeLayerMetrics(b, size, records, messages)
 	})
+}
+
+// BenchmarkConversationDecodeStrategies compares two decode strategies.
+//
+//	current:   the production path. It decodes the full envelope with a
+//	           json.RawMessage payload. It copies the payload for every record.
+//	selective: it probes the record and payload type first. It decodes the
+//	           payload only for message records.
+func BenchmarkConversationDecodeStrategies(b *testing.B) {
+	for _, shape := range decodeBenchmarkShapes() {
+		path, size := writeDecodeBenchmarkRollout(b, shape)
+		messages := countDecodeBenchmarkMessages(b, path)
+
+		b.Run(shape.name+"/current", func(b *testing.B) {
+			benchmarkDecodeStrategy(b, size, messages, func() (int, error) {
+				decoded, _, err := ReadConversationContextMeasured(context.Background(), path)
+				if err != nil {
+					return 0, err
+				}
+				return len(decoded), nil
+			})
+		})
+		b.Run(shape.name+"/selective", func(b *testing.B) {
+			benchmarkDecodeStrategy(b, size, messages, func() (int, error) {
+				decoded, _, err := decodeConversationSelective(context.Background(), path)
+				if err != nil {
+					return 0, err
+				}
+				return len(decoded), nil
+			})
+		})
+	}
+}
+
+// BenchmarkConversationDecodeRealFileStrategies runs the same A/B over one
+// real rollout file. Set CODEX_RECALL_DECODE_BENCH_FILE to the file path. Use
+// -benchtime=1x for large files.
+func BenchmarkConversationDecodeRealFileStrategies(b *testing.B) {
+	path := os.Getenv("CODEX_RECALL_DECODE_BENCH_FILE")
+	if path == "" {
+		b.Skip("set CODEX_RECALL_DECODE_BENCH_FILE to a rollout JSONL file")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	size := info.Size()
+	messages := countDecodeBenchmarkMessages(b, path)
+
+	b.Run("current", func(b *testing.B) {
+		benchmarkDecodeStrategy(b, size, messages, func() (int, error) {
+			decoded, _, err := ReadConversationContextMeasured(context.Background(), path)
+			if err != nil {
+				return 0, err
+			}
+			return len(decoded), nil
+		})
+	})
+	b.Run("selective", func(b *testing.B) {
+		benchmarkDecodeStrategy(b, size, messages, func() (int, error) {
+			decoded, _, err := decodeConversationSelective(context.Background(), path)
+			if err != nil {
+				return 0, err
+			}
+			return len(decoded), nil
+		})
+	})
+}
+
+func benchmarkDecodeStrategy(b *testing.B, size int64, wantMessages int, run func() (int, error)) {
+	b.Helper()
+	b.SetBytes(size)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		got, err := run()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if got != wantMessages {
+			b.Fatalf("decoded %d messages, want %d", got, wantMessages)
+		}
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(wantMessages), "messages/op")
+}
+
+// recordProbe is the minimal record discriminator. It decodes only the record
+// type and the payload type. It keeps no payload bytes, so the decode does not
+// copy large tool output. A message record gets its timestamp from the second
+// decode of the line.
+type recordProbe struct {
+	Type    string `json:"type"`
+	Payload struct {
+		Type string `json:"type"`
+	} `json:"payload"`
+}
+
+// conversationTextSelective probes the record kind first. It decodes the
+// payload only for message records. The output matches conversationText. It
+// costs a second parse of the line for message records.
+func conversationTextSelective(line []byte) (role, text, timestamp, recordType string) {
+	var probe recordProbe
+	if err := json.Unmarshal(line, &probe); err != nil {
+		return "", "", "", ""
+	}
+	switch probe.Type {
+	case "response_item":
+		if probe.Payload.Type != "message" {
+			return "", "", "", ""
+		}
+	case "event_msg":
+		if probe.Payload.Type != "user_message" && probe.Payload.Type != "agent_message" {
+			return "", "", "", ""
+		}
+	default:
+		return "", "", "", ""
+	}
+
+	var rec record
+	if err := json.Unmarshal(line, &rec); err != nil {
+		return "", "", "", ""
+	}
+	role, text = conversationText(rec)
+	return role, text, rec.Timestamp, rec.Type
+}
+
+// decodeConversationSelective decodes a rollout with the selective strategy.
+// It is benchmark-only. It must return the same messages as
+// ReadConversationContextMeasured.
+func decodeConversationSelective(ctx context.Context, path string) ([]ConversationMessage, int64, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer file.Close()
+
+	counter := &byteCountingReader{reader: file}
+	reader := bufio.NewReader(counter)
+	messages := make([]ConversationMessage, 0)
+	lastRole := ""
+	lastText := ""
+	lastRecordType := ""
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, counter.bytesRead, err
+		}
+		line, readErr := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			role, text, timestampValue, recordType := conversationTextSelective(bytes.TrimSpace(line))
+			text = strings.TrimSpace(text)
+			if role != "" && text != "" {
+				normalized := textutil.NormalizeWhitespace(text)
+				duplicateRepresentation := role == lastRole && normalized == lastText && recordType != lastRecordType
+				if !duplicateRepresentation {
+					timestamp, _ := parseTimestamp(timestampValue)
+					messages = append(messages, ConversationMessage{Timestamp: timestamp, Role: role, Text: text})
+				}
+				lastRole = role
+				lastText = normalized
+				lastRecordType = recordType
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return messages, counter.bytesRead, nil
+		}
+		if readErr != nil {
+			return nil, counter.bytesRead, readErr
+		}
+	}
 }
 
 func reportDecodeLayerMetrics(b *testing.B, size int64, records, messages int) {
@@ -260,6 +441,16 @@ func writeDecodeBenchmarkRollout(b *testing.B, shape decodeBenchmarkShape) (stri
 	b.Helper()
 
 	path := filepath.Join(b.TempDir(), shape.name+".jsonl")
+	content := decodeBenchmarkRolloutContent(shape)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		b.Fatal(err)
+	}
+	return path, int64(len(content))
+}
+
+// decodeBenchmarkRolloutContent builds one synthetic rollout as a string. The
+// test for selective decode reuses it to stay in sync with the benchmark.
+func decodeBenchmarkRolloutContent(shape decodeBenchmarkShape) string {
 	messageText := decodeBenchmarkText("conversation message text", shape.messageBytes)
 	toolText := decodeBenchmarkText("tool output payload", shape.toolBytes)
 
@@ -287,11 +478,7 @@ func writeDecodeBenchmarkRollout(b *testing.B, shape decodeBenchmarkShape) (stri
 		}
 	}
 
-	content := builder.String()
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		b.Fatal(err)
-	}
-	return path, int64(len(content))
+	return builder.String()
 }
 
 func decodeBenchmarkText(prefix string, size int) string {
@@ -304,4 +491,35 @@ func decodeBenchmarkText(prefix string, size int) string {
 		repeats = 1
 	}
 	return prefix + " " + strings.Repeat(filler, repeats)
+}
+
+// TestDecodeConversationSelectiveMatchesCurrent guards the benchmark-only
+// selective decoder against the production decoder.
+func TestDecodeConversationSelectiveMatchesCurrent(t *testing.T) {
+	shape := decodeBenchmarkShape{name: "equivalence", turns: 8, messageBytes: 256, toolBytes: 1024}
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	content := decodeBenchmarkRolloutContent(shape) + "not-json\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	want, wantBytes, err := ReadConversationContextMeasured(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, gotBytes, err := decodeConversationSelective(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBytes != wantBytes {
+		t.Fatalf("bytes read = %d, want %d", gotBytes, wantBytes)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("messages = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("messages[%d] = %#v, want %#v", i, got[i], want[i])
+		}
+	}
 }
